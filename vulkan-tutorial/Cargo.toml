@@ -1,0 +1,15 @@
+[package]
+name = "vulkan-tutorial"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"	# used for simple error handling 
+log = "0.4.29"		# used for logging statement
+cgmath = "0.18.0"	# used as a Rust replacement for GLM (graphics math library)
+png = "0.18.1"		# used to load PNGs to use as textures
+pretty_env_logger = "0.5.0"	# used to print our logs to the console 
+thiserror = "2.0.18"		# used to define custom errors types without boilerplate
+tobj = { version = "4.0.3", features = ["log"] } # used to load 3D models in the Wavefront .obj format
+vulkanalia = { version = "=0.35.0", features = ["libloading", "provisional", "window"] } # used to call the Vulkan API
+winit = "0.29.15" # used to create a window to render to
