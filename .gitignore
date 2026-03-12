@@ -1,3 +1,9 @@
+# Rust dependencies
 Cargo.lock
-
 target/
+
+# Docs
+docs/graphic_computing_help/*
+
+# Binary
+*.spv
