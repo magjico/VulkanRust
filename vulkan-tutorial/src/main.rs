@@ -144,6 +144,7 @@ impl App {
         create_pipeline(&device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
+        create_setup_command_buffer(&device, &mut data)?;
         create_texture_image(&instance, &device, &mut data)?;
 		create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
@@ -302,6 +303,7 @@ impl App {
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.device.destroy_buffer(self.data.interleaved_buffer, None);
         self.device.free_memory(self.data.interleaved_buffer_memory, None);
+        self.device.free_command_buffers(self.data.command_pool, &[self.data.setup_command_buffer]);
         self.device.destroy_command_pool(self.data.command_pool, None);
         self.device.destroy_device(None);
         self.instance.destroy_surface_khr(self.data.surface, None);
@@ -319,6 +321,7 @@ impl App {
         self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
         self.data.uniform_buffers.iter().for_each(|b| self.device.destroy_buffer(*b, None));
         self.data.uniform_buffers_memory.iter().for_each(|m| self.device.free_memory(*m, None));
+        
         self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
         self.data.framebuffers.iter().for_each(|f| self.device.destroy_framebuffer(*f, None));
         self.device.destroy_pipeline(self.data.pipeline, None);
@@ -366,6 +369,7 @@ struct AppData {
     descriptor_sets: Vec<vk::DescriptorSet>,
     // Command Buffers
     command_buffers: Vec<vk::CommandBuffer>,
+    setup_command_buffer: vk::CommandBuffer,
     // Sync Objects
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -935,7 +939,9 @@ unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()>
 unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
     let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
 
-    let info = vk::CommandPoolCreateInfo::builder().queue_family_index(indices.graphics);
+    let info = vk::CommandPoolCreateInfo::builder()
+        .queue_family_index(indices.graphics)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
     data.command_pool = device.create_command_pool(&info, None)?;
 
@@ -1316,26 +1322,6 @@ unsafe fn create_buffer(
     Ok((buffer, buffer_memory))
 }
 
-unsafe fn copy_buffer(
-    device: &Device,
-    data: &AppData,
-    source: vk::Buffer,
-    destination: vk::Buffer,
-    size: vk::DeviceSize,
-) -> Result<()> {
-    // Allocate
-	let command_buffer = begin_single_time_commands(device, data)?;
-
-    // Commands
-	let regions = vk::BufferCopy::builder().size(size);
-    device.cmd_copy_buffer(command_buffer, source, destination, &[regions]);
-
-    // Cleanup
-	end_single_time_commands(device, data, command_buffer)?;
-
-    Ok(())
-}
-
 unsafe fn copy_buffers(
     device: &Device,
     data: &AppData,
@@ -1344,8 +1330,7 @@ unsafe fn copy_buffers(
     sizes: &[vk::DeviceSize],
     dst_offsets: &[vk::DeviceSize],
 ) -> Result<()> {
-    // Allocate
-    let command_buffer = begin_single_time_commands(device, data)?;
+    begin_setup_command_buffer(&device, &data)?;
 
     // Commands
     let mut src_offset = 0;
@@ -1362,10 +1347,9 @@ unsafe fn copy_buffers(
 
         src_offset += size;
     }
-    device.cmd_copy_buffer(command_buffer, source, destination, &regions);
+    device.cmd_copy_buffer(data.setup_command_buffer, source, destination, &regions);
 
-	// Cleanup
-    end_single_time_commands(device, data, command_buffer)?;
+    flush_command_buffer(&device, &data)?;
 
     Ok(())
 }
@@ -1426,6 +1410,8 @@ unsafe fn create_texture_image(
 	data.texture_image_memory = texture_image_memory;
 	data.texture_image = texture_image;
 
+    begin_setup_command_buffer(&device, &data)?;
+
 	transition_image_layout(
 		device,
 		data,
@@ -1452,6 +1438,8 @@ unsafe fn create_texture_image(
 		vk::ImageLayout::TRANSFER_DST_OPTIMAL,
 		vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
 	)?;
+
+    flush_command_buffer(&device, &data)?;
 
 	device.destroy_buffer(staging_buffer, None);
 	device.free_memory(staging_buffer_memory, None);
@@ -1546,9 +1534,6 @@ unsafe fn transition_image_layout(
 	old_layout: vk::ImageLayout,
 	new_layout: vk::ImageLayout,
 ) -> Result<()> {
-	// Allocate
-	let command_buffer = begin_single_time_commands(device, data)?;
-
 	// Transition barrier masks
 	let (
 		src_access_mask,
@@ -1592,7 +1577,7 @@ unsafe fn transition_image_layout(
 
 	// Commands
 	device.cmd_pipeline_barrier(
-		command_buffer,
+		data.setup_command_buffer,
 		src_stage_mask,
 		dst_stage_mask,
 		vk::DependencyFlags::empty(),
@@ -1600,9 +1585,6 @@ unsafe fn transition_image_layout(
 		&[] as &[vk::BufferMemoryBarrier],
 		&[barrier],
 	);
-
-	// Cleanup
-    end_single_time_commands(device, data, command_buffer)?;
 
 	Ok(())
 }
@@ -1615,10 +1597,7 @@ unsafe fn copy_buffer_to_image(
 	width: u32,
 	height: u32
 ) -> Result<()> {
-	// Allocate
-	let command_buffer = begin_single_time_commands(device, data)?;
-
-	// Buffer copy (parameters)
+	// Buffer parameters setup
 	let subresource = vk::ImageSubresourceLayers::builder()
 		.aspect_mask(vk::ImageAspectFlags::COLOR)
 		.mip_level(0)
@@ -1633,17 +1612,14 @@ unsafe fn copy_buffer_to_image(
 		.image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
 		.image_extent(vk::Extent3D { width, height, depth: 1 });
 
-	// Buffer copy
+	// Buffer record
 	device.cmd_copy_buffer_to_image(
-		command_buffer,
+		data.setup_command_buffer,
 		buffer,
 		image,
 		vk::ImageLayout::TRANSFER_DST_OPTIMAL,
 		&[region]
 	);
-
-	// Cleanup
-	end_single_time_commands(device, data, command_buffer)?;
 
 	Ok(())
 }
@@ -1689,38 +1665,38 @@ unsafe fn get_memory_type_index(
         .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
 }
 
-unsafe fn begin_single_time_commands(
-	device: &Device,
-	data: &AppData,
-) -> Result<vk::CommandBuffer> {
-	let info = vk::CommandBufferAllocateInfo::builder()
-		.level(vk::CommandBufferLevel::PRIMARY)
-		.command_pool(data.command_pool)
-		.command_buffer_count(1);
-
-	let command_buffer = device.allocate_command_buffers(&info)?[0];
-
-	let info = vk::CommandBufferBeginInfo::builder()
+unsafe fn begin_setup_command_buffer(device: &Device, data: &AppData) -> Result<()> {
+    let info = vk::CommandBufferBeginInfo::builder()
 		.flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-	device.begin_command_buffer(command_buffer, &info)?;
-	Ok(command_buffer)
+	device.begin_command_buffer(data.setup_command_buffer, &info)?;
+
+    Ok(())
 }
 
-unsafe fn end_single_time_commands(
-	device: &Device,
-	data: &AppData,
-	command_buffer: vk::CommandBuffer,
-) -> Result<()> {
-	device.end_command_buffer(command_buffer)?;
+unsafe fn create_setup_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
+    let info = vk::CommandBufferAllocateInfo::builder()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_pool(data.command_pool)
+        .command_buffer_count(1);
+    
+    let command_buffer = device.allocate_command_buffers(&info)?[0];
+    data.setup_command_buffer = command_buffer;
 
-	let command_buffers = &[command_buffer];
+    Ok(())
+}
+
+unsafe fn flush_command_buffer(device: &Device, data: &AppData) -> Result<()> {
+    device.end_command_buffer(data.setup_command_buffer)?;
+
+    let command_buffers = &[data.setup_command_buffer];
 	let info = vk::SubmitInfo::builder()
 		.command_buffers(command_buffers);
 
-	device.queue_submit(data.graphics_queue, &[info], vk::Fence::null())?;
+    device.queue_submit(data.graphics_queue, &[info], vk::Fence::null())?;
 	device.queue_wait_idle(data.graphics_queue)?;
-	device.free_command_buffers(data.command_pool, command_buffers);
 
-	Ok(())
+    device.reset_command_buffer(data.setup_command_buffer, vk::CommandBufferResetFlags::empty())?;
+
+    Ok(())
 }
