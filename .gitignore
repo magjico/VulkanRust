@@ -7,3 +7,6 @@ docs/graphic_computing_help/*
 
 # Binary
 *.spv
+
+# Texture
+vulkan-tutorial/resources/textures/*
