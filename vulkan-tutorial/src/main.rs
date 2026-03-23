@@ -7,7 +7,7 @@
     clippy::unnecessary_wraps
 )]
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::raw::c_void;
@@ -15,6 +15,7 @@ use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 use std::fs::File;
 use std::io::BufReader;
+use std::hash::{Hash, Hasher};
 
 use anyhow::{Result, anyhow};
 use cgmath::{
@@ -58,14 +59,24 @@ type Vec3 = cgmath::Vector3<f32>;
 type Mat4 = cgmath::Matrix4<f32>;
 
 #[rustfmt::skip]
-static VERTICES: [Vertex; 4] = [
-    Vertex::new(vec2(-0.5, -0.5), vec3(1.0, 0.0, 0.0), vec2(1.0, 0.0)),
-    Vertex::new(vec2(0.5, -0.5), vec3(0.0, 1.0, 0.0), vec2(0.0, 0.0)),
-    Vertex::new(vec2(0.5, 0.5), vec3(0.0, 0.0, 1.0), vec2(0.0, 1.0)),
-    Vertex::new(vec2(-0.5, 0.5), vec3(1.0, 1.0, 1.0), vec2(1.0, 1.0)),
+static VERTICES: [Vertex; 8] = [
+    Vertex::new(vec3(-0.5, -0.5, 0.0),vec3(1.0, 0.0, 0.0),vec2(1.0, 0.0)),
+    Vertex::new(vec3(0.5, -0.5, 0.0), vec3(0.0, 1.0, 0.0), vec2(0.0, 0.0)),
+    Vertex::new(vec3(0.5, 0.5, 0.0), vec3(0.0, 0.0, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec3(-0.5, 0.5, 0.0), vec3(1.0, 1.0, 1.0), vec2(1.0, 1.0)),
+    //
+    Vertex::new(vec3(-0.5, -0.5, -0.5), vec3(1.0, 0.0, 0.0), vec2(1.0, 0.0)),
+    Vertex::new(vec3(0.5, -0.5, -0.5), vec3(0.0, 1.0, 0.0), vec2(0.0, 0.0)),
+    Vertex::new(vec3(0.5, 0.5, -0.5), vec3(0.0, 0.0, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec3(-0.5, 0.5, -0.5), vec3(1.0, 1.0, 1.0), vec2(1.0, 1.0)),
 ];
 
-const INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
+#[rustfmt::skip]
+const INDICES: &[u32] = &[
+    0, 1, 2, 2, 3, 0,
+    //
+    4, 5, 6, 6, 7, 4
+];
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -142,12 +153,15 @@ impl App {
         create_render_pass(&instance, &device, &mut data)?;
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
-        create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
+        create_depth_objects(&instance, &device, &mut data)?;
+        create_framebuffers(&device, &mut data)?;
         create_setup_command_buffer(&device, &mut data)?;
         create_texture_image(&instance, &device, &mut data)?;
 		create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
+
+        load_model(&mut data)?;
         create_interleaved_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
@@ -243,15 +257,21 @@ impl App {
             vec3(0.0, 0.0, 1.0)
         );
 
-        let mut proj = cgmath::perspective(
+        // this matrix is use to correct the proj matrix from the OpenGL range to the Vulkan one.
+        // warn: this is a column-major matrix.
+        let correction = Mat4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0 / 2.0, 0.0,
+            0.0, 0.0, 1.0 / 2.0, 1.0
+        );
+
+        let proj = correction * cgmath::perspective(
             Deg(45.0),
             self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
             0.1,
             10.0
         );
-
-        //(re-)invert y axis
-        proj[1][1] *= -1.0;
 
         let ubo = UniformBufferObject { model, view, proj,  };
 
@@ -277,6 +297,7 @@ impl App {
         create_swapchain_image_views(&self.device, &mut self.data)?;
         create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
+        create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
@@ -318,11 +339,13 @@ impl App {
     /// Destroys the parts of our Vulkan app related to the swapchain.
     #[rustfmt::skip]
     unsafe fn destroy_swapchain(&mut self) {
-        self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
-        self.data.uniform_buffers.iter().for_each(|b| self.device.destroy_buffer(*b, None));
-        self.data.uniform_buffers_memory.iter().for_each(|m| self.device.free_memory(*m, None));
-        
         self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
+        self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
+        self.data.uniform_buffers_memory.iter().for_each(|m| self.device.free_memory(*m, None));
+        self.data.uniform_buffers.iter().for_each(|b| self.device.destroy_buffer(*b, None));
+        self.device.destroy_image_view(self.data.depth_image_view, None);
+        self.device.free_memory(self.data.depth_image_memory, None);
+        self.device.destroy_image(self.data.depth_image, None);
         self.data.framebuffers.iter().for_each(|f| self.device.destroy_framebuffer(*f, None));
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
@@ -358,6 +381,9 @@ struct AppData {
     framebuffers: Vec<vk::Framebuffer>,
     // Command Pool
     command_pool: vk::CommandPool,
+    // Meshes and Models
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
     // Buffers
     interleaved_buffer: vk::Buffer,
     interleaved_buffer_memory: vk::DeviceMemory,
@@ -380,6 +406,10 @@ struct AppData {
 	texture_image_memory: vk::DeviceMemory,
 	texture_image_view: vk::ImageView,
     texture_sampler: vk::Sampler,
+    // Depth
+    depth_image: vk::Image,
+    depth_image_memory: vk::DeviceMemory,
+    depth_image_view: vk::ImageView,
 }
 
 //================================================
@@ -700,7 +730,7 @@ unsafe fn create_swapchain_image_views(device: &Device, data: &mut AppData) -> R
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
-        .map(|i| create_image_view(device, *i, data.swapchain_format))
+        .map(|i| create_image_view(device, *i, data.swapchain_format, vk::ImageAspectFlags::COLOR))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(())
@@ -712,7 +742,6 @@ unsafe fn create_swapchain_image_views(device: &Device, data: &mut AppData) -> R
 
 unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
     // Attachments
-
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain_format)
         .samples(vk::SampleCountFlags::_1)
@@ -723,30 +752,49 @@ unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut Ap
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-    // Subpasses
+    let depth_stencil_attachment = vk::AttachmentDescription::builder()
+        .format(get_depth_format(instance, data)?)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+    // Subpasses
     let color_attachment_ref = vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
+    let stencil_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
     let color_attachments = &[color_attachment_ref];
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(color_attachments);
+        .color_attachments(color_attachments)
+        .depth_stencil_attachment(&stencil_attachment_ref);
 
     // Dependencies
-
     let dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+            | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+        )
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+            | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+        )
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+        );
 
     // Create
 
-    let attachments = &[color_attachment];
+    let attachments = &[color_attachment, depth_stencil_attachment];
     let subpasses = &[subpass];
     let dependencies = &[dependency];
     let info = vk::RenderPassCreateInfo::builder()
@@ -785,9 +833,8 @@ unsafe fn create_descriptor_set_layout(device: &Device, data: &mut AppData) -> R
 
 unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // Stages
-
-    let vert = include_bytes!("../shaders/hello_cube/vert.spv");
-    let frag = include_bytes!("../shaders/hello_cube/frag.spv");
+    let vert = include_bytes!("../shaders/hello_square/vert.spv");
+    let frag = include_bytes!("../shaders/hello_square/frag.spv");
 
     let vert_shader_module = create_shader_module(device, &vert[..])?;
     let frag_shader_module = create_shader_module(device, &frag[..])?;
@@ -803,7 +850,6 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .name(b"main\0");
 
     // Vertex Input State
-
     let binding_descriptions = &[Vertex::binding_description()];
     let attribute_descriptions = Vertex::attribute_descriptions();
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
@@ -811,13 +857,11 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .vertex_attribute_descriptions(&attribute_descriptions);
 
     // Input Assembly State
-
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
     // Viewport State
-
     let viewport = vk::Viewport::builder()
         .x(0.0)
         .y(0.0)
@@ -837,7 +881,6 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .scissors(scissors);
 
     // Rasterization State
-
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
         .depth_clamp_enable(false)
         .rasterizer_discard_enable(false)
@@ -848,13 +891,19 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .depth_bias_enable(false);
 
     // Multisample State
-
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::_1);
 
-    // Color Blend State
+    // Depth Stencil State
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_bounds_test_enable(false)
+        .stencil_test_enable(false);
 
+    // Color Blend State
     let attachment = vk::PipelineColorBlendAttachmentState::builder()
         .color_write_mask(vk::ColorComponentFlags::all())
         .blend_enable(false);
@@ -874,7 +923,6 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 
     // Create
-
     let stages = &[vert_stage, frag_stage];
     let info = vk::GraphicsPipelineCreateInfo::builder()
         .stages(stages)
@@ -883,6 +931,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterization_state)
         .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         .layout(data.pipeline_layout)
         .render_pass(data.render_pass)
@@ -893,7 +942,6 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .0[0];
 
     // Cleanup
-
     device.destroy_shader_module(vert_shader_module, None);
     device.destroy_shader_module(frag_shader_module, None);
 
@@ -917,7 +965,7 @@ unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()>
         .swapchain_image_views
         .iter()
         .map(|i| {
-            let attachments = &[*i];
+            let attachments = &[*i, data.depth_image_view];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(attachments)
@@ -956,8 +1004,8 @@ unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut A
 /// First the vertex buffer then the index one.
 unsafe fn create_interleaved_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()>
 {
-    let vertex_size = (size_of::<Vertex>() * VERTICES.len()) as u64;
-    let index_size = (size_of::<u16>() * INDICES.len()) as u64;
+    let vertex_size = (size_of::<Vertex>() * data.vertices.len()) as u64;
+    let index_size = (size_of::<u32>() * data.indices.len()) as u64;
     let size = vertex_size + index_size;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -971,12 +1019,12 @@ unsafe fn create_interleaved_buffer(instance: &Instance, device: &Device, data: 
 
     // Copy (staging)
     let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8;
-    memcpy(VERTICES.as_ptr() as *const u8, memory, vertex_size as usize);
-    memcpy(INDICES.as_ptr() as *const u8, memory.add(vertex_size as usize), index_size as usize);
+    memcpy(data.vertices.as_ptr() as *const u8, memory, vertex_size as usize);
+    memcpy(data.indices.as_ptr() as *const u8, memory.add(vertex_size as usize), index_size as usize);
     device.unmap_memory(staging_buffer_memory);
 
     // bytes size alignment
-    let alignment = size_of::<u16>() as u64;
+    let alignment = size_of::<u32>() as u64;
     let aligned_vertex_size = (vertex_size + alignment - 1) & !(alignment - 1);
     let size = aligned_vertex_size + index_size;
 
@@ -1106,7 +1154,6 @@ unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<
 
 unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
     // Allocate
-
     let allocate_info = vk::CommandBufferAllocateInfo::builder()
         .command_pool(data.command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -1130,7 +1177,14 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
             },
         };
 
-        let clear_values = &[color_clear_value];
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        let clear_values = &[color_clear_value, depth_clear_value];
         let info = vk::RenderPassBeginInfo::builder()
             .render_pass(data.render_pass)
             .framebuffer(data.framebuffers[i])
@@ -1140,7 +1194,7 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
         device.cmd_begin_render_pass(*command_buffer, &info, vk::SubpassContents::INLINE);
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
         device.cmd_bind_vertex_buffers(*command_buffer, 0, &[data.interleaved_buffer], &[0]);
-        device.cmd_bind_index_buffer(*command_buffer, data.interleaved_buffer, data.index_offset, vk::IndexType::UINT16);
+        device.cmd_bind_index_buffer(*command_buffer, data.interleaved_buffer, data.index_offset, vk::IndexType::UINT32);
 
         device.cmd_bind_descriptor_sets(*command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -1150,7 +1204,7 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
             &[]
         );
 
-        device.cmd_draw_indexed(*command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
+        device.cmd_draw_indexed(*command_buffer, data.indices.len() as u32, 1, 0, 0, 0);
         device.cmd_end_render_pass(*command_buffer);
 
         device.end_command_buffer(*command_buffer)?;
@@ -1236,13 +1290,13 @@ impl SwapchainSupport {
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 struct Vertex {
-    pos: Vec2,
+    pos: Vec3,
     color: Vec3,
     tex_coord: Vec2,
 }
 
 impl Vertex {
-    const fn new(pos: Vec2, color: Vec3, tex_coord: Vec2) -> Self {
+    const fn new(pos: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
         Self { pos, color, tex_coord }
     }
 
@@ -1258,23 +1312,46 @@ impl Vertex {
         let pos = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(0)
-            .format(vk::Format::R32G32_SFLOAT)
+            .format(vk::Format::R32G32B32_SFLOAT)
             .offset(0)
             .build();
         let color = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(size_of::<Vec2>() as u32)
+            .offset(size_of::<Vec3>() as u32)
             .build();
         let tex_coord = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(2)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset((size_of::<Vec2>() + size_of::<Vec3>()) as u32)
+            .offset((size_of::<Vec3>() + size_of::<Vec3>()) as u32)
             .build();
 
         [pos, color, tex_coord]
+    }
+}
+
+impl PartialEq for Vertex {
+    fn eq(&self, other: &Self) -> bool {
+        self.pos == other.pos
+            && self.color == other.color
+            && self.tex_coord == other.tex_coord
+    }
+}
+
+impl Eq for Vertex {}
+
+impl Hash for Vertex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pos[0].to_bits().hash(state);
+        self.pos[1].to_bits().hash(state);
+        self.pos[2].to_bits().hash(state);
+        self.color[0].to_bits().hash(state);
+        self.color[1].to_bits().hash(state);
+        self.color[2].to_bits().hash(state);
+        self.tex_coord[0].to_bits().hash(state);
+        self.tex_coord[1].to_bits().hash(state);
     }
 }
 
@@ -1363,7 +1440,7 @@ unsafe fn create_texture_image(
     device: &Device,
     data: &mut AppData
 ) -> Result<()> {
-	let image = File::open("resources/textures/texture.png")?;
+	let image = File::open("resources/textures/viking_room.png")?;
 
 	let io_buf = BufReader::new(image); // IO Buffer
 	let decoder = Decoder::new(io_buf); // PNG Decoder
@@ -1371,6 +1448,10 @@ unsafe fn create_texture_image(
 
 	let size = reader.info().raw_bytes() as u64;
 	let (width, height) = reader.info().size();
+
+    // if width != 1024 || height != 1024 || reader.info().color_type != png::ColorType::Rgba {
+    //     panic!("Invalid texture image.");
+    // }
 
 	let mut pixels = vec![0; size as usize];
 	reader.next_frame(&mut pixels)?;
@@ -1452,6 +1533,7 @@ unsafe fn create_texture_image_view(device: &Device, data: &mut AppData) -> Resu
         device,
         data.texture_image,
         vk::Format::R8G8B8A8_SRGB,
+        vk::ImageAspectFlags::COLOR,
     )?;
 
 	Ok(())
@@ -1476,6 +1558,106 @@ unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<
         .max_lod(0.0);
 
     data.texture_sampler = device.create_sampler(&info, None)?;
+
+    Ok(())
+}
+
+//================================================
+// Depth
+//================================================
+
+unsafe fn create_depth_objects(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData
+) -> Result<()> {
+    let format = get_depth_format(instance, data)?;
+
+    let (depth_image, depth_image_memory) = create_image(
+        instance,
+        device,
+        data,
+        data.swapchain_extent.width,
+        data.swapchain_extent.height,
+        format,
+        vk::ImageTiling::OPTIMAL,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL
+    )?;
+
+    data.depth_image = depth_image;
+    data.depth_image_memory = depth_image_memory;
+    data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH)?;
+
+    Ok(())
+}
+
+unsafe fn get_depth_format(instance: &Instance, data: &AppData) -> Result<vk::Format> {
+    let candidates = &[
+        vk::Format::D32_SFLOAT,
+        vk::Format::D32_SFLOAT_S8_UINT,
+        vk::Format::D24_UNORM_S8_UINT,
+    ];
+
+    get_supported_format(
+        instance,
+        data,
+        candidates,
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
+    )
+}
+
+//================================================
+// Model loader
+//================================================
+
+fn load_model(data: &mut AppData) -> Result<()> {
+    // Model
+
+    let mut reader = BufReader::new(File::open("resources/3D_meshes/viking_room.obj")?);
+
+    let (models, _) = tobj::load_obj_buf(
+        &mut reader,
+        &tobj::LoadOptions {
+            triangulate: true,
+            ..Default::default()
+        },
+        |_| Ok(Default::default()),
+    )?;
+
+    // Vertices / Indices
+
+    let mut unique_vertices = HashMap::new();
+
+    for model in &models {
+        for index in &model.mesh.indices {
+            let pos_offset = (3 * index) as usize;
+            let tex_coord_offset = (2 * index) as usize;
+
+            let vertex = Vertex {
+                pos: vec3(
+                    model.mesh.positions[pos_offset],
+                    model.mesh.positions[pos_offset + 1],
+                    model.mesh.positions[pos_offset + 2],
+                ),
+                color: vec3(1.0, 1.0, 1.0),
+                tex_coord: vec2(
+                    model.mesh.texcoords[tex_coord_offset],
+                    1.0 - model.mesh.texcoords[tex_coord_offset + 1],
+                ),
+            };
+
+            if let Some(index) = unique_vertices.get(&vertex) {
+                data.indices.push(*index as u32);
+            } else {
+                let index = data.vertices.len();
+                unique_vertices.insert(vertex, index);
+                data.vertices.push(vertex);
+                data.indices.push(index as u32);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -1628,9 +1810,10 @@ unsafe fn create_image_view(
     device: &Device,
     image: vk::Image,
     format: vk::Format,
+    aspect: vk::ImageAspectFlags,
 ) -> Result<vk::ImageView> {
     let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(aspect)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)
@@ -1699,4 +1882,25 @@ unsafe fn flush_command_buffer(device: &Device, data: &AppData) -> Result<()> {
     device.reset_command_buffer(data.setup_command_buffer, vk::CommandBufferResetFlags::empty())?;
 
     Ok(())
+}
+
+unsafe fn get_supported_format(
+    instance: &Instance,
+    data: &AppData,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Result<vk::Format> {
+    candidates
+        .iter()
+        .cloned()
+        .find(|f| {
+            let properties = instance.get_physical_device_format_properties(data.physical_device, *f,);
+            match tiling {
+                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
+                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
+                _ => false,
+            }
+        })
+        .ok_or_else(|| anyhow!("Failed to find supported format!"))
 }

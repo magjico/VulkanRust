@@ -10,3 +10,6 @@ docs/graphic_computing_help/*
 
 # Texture
 vulkan-tutorial/resources/textures/*
+
+# 3D meshes
+vulkan-tutorial/resources/3D_meshes/*
