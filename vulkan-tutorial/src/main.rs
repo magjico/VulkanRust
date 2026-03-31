@@ -42,6 +42,8 @@ use vulkanalia::vk::ExtDebugUtilsExtensionInstanceCommands;
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 use vulkanalia::vk::KhrSwapchainExtensionDeviceCommands;
 
+use graphic_env::resources::get_supported_format;
+
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 /// The name of the validation layers.
@@ -1922,7 +1924,7 @@ unsafe fn get_depth_format(instance: &Instance, data: &AppData) -> Result<vk::Fo
 
     get_supported_format(
         instance,
-        data,
+        data.physical_device,
         candidates,
         vk::ImageTiling::OPTIMAL,
         vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
@@ -2238,25 +2240,4 @@ unsafe fn flush_command_buffer(device: &Device, data: &AppData) -> Result<()> {
     device.reset_command_buffer(data.setup_command_buffer, vk::CommandBufferResetFlags::empty())?;
 
     Ok(())
-}
-
-unsafe fn get_supported_format(
-    instance: &Instance,
-    data: &AppData,
-    candidates: &[vk::Format],
-    tiling: vk::ImageTiling,
-    features: vk::FormatFeatureFlags,
-) -> Result<vk::Format> {
-    candidates
-        .iter()
-        .cloned()
-        .find(|f| {
-            let properties = instance.get_physical_device_format_properties(data.physical_device, *f,);
-            match tiling {
-                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
-                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
-                _ => false,
-            }
-        })
-        .ok_or_else(|| anyhow!("Failed to find supported format!"))
 }
