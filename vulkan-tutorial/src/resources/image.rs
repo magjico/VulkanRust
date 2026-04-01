@@ -24,7 +24,7 @@ use vulkanalia::{prelude::v1_0::{Instance, vk}, vk::InstanceV1_0};
 /// ## Examples
 /// 
 /// ```
-/// use crate::resources::image::get_supported_format;
+/// use graphic_env::resources::get_supported_format;
 /// 
 /// let candidates = &[
 ///     vk::Format::D32_SFLOAT,

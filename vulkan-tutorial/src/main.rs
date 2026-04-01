@@ -42,7 +42,8 @@ use vulkanalia::vk::ExtDebugUtilsExtensionInstanceCommands;
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 use vulkanalia::vk::KhrSwapchainExtensionDeviceCommands;
 
-use graphic_env::resources::get_supported_format;
+use graphic_env::resources::*;
+use graphic_env::gpu::*;
 
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -171,7 +172,7 @@ impl App {
 		create_color_objects(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
-        create_setup_command_buffer(&device, &mut data)?;
+        data.setup_command_buffer = create_setup_command_buffer(&device, data.command_pool)?;
         create_texture_image(&instance, &device, &mut data)?;
 		create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
@@ -1570,7 +1571,7 @@ unsafe fn create_buffer(
 
     let memory_info = vk::MemoryAllocateInfo::builder()
         .allocation_size(requirements.size)
-        .memory_type_index(get_memory_type_index(instance, data, properties, requirements)?);
+        .memory_type_index(get_memory_type_index(instance, data.physical_device, properties, requirements)?);
 
     let buffer_memory = device.allocate_memory(&memory_info, None)?;
 
@@ -1587,7 +1588,7 @@ unsafe fn copy_buffers(
     sizes: &[vk::DeviceSize],
     dst_offsets: &[vk::DeviceSize],
 ) -> Result<()> {
-    begin_setup_command_buffer(&device, &data)?;
+    begin_setup_command_buffer(&device, data.setup_command_buffer)?;
 
     // Commands
     let mut src_offset = 0;
@@ -1606,7 +1607,7 @@ unsafe fn copy_buffers(
     }
     device.cmd_copy_buffer(data.setup_command_buffer, source, destination, &regions);
 
-    flush_command_buffer(&device, &data)?;
+    flush_setup_command_buffer(&device, data.setup_command_buffer, data.graphics_queue)?;
 
     Ok(())
 }
@@ -1673,7 +1674,7 @@ unsafe fn create_texture_image(
 	data.texture_image_memory = texture_image_memory;
 	data.texture_image = texture_image;
 
-    begin_setup_command_buffer(&device, &data)?;
+    begin_setup_command_buffer(&device, data.setup_command_buffer)?;
 
 	transition_image_layout(
 		device,
@@ -1705,7 +1706,7 @@ unsafe fn create_texture_image(
 		data.mip_levels
 	)?;
 
-    flush_command_buffer(&device, &data)?;
+    flush_setup_command_buffer(&device, data.setup_command_buffer, data.graphics_queue)?;
 
 	device.destroy_buffer(staging_buffer, None);
 	device.free_memory(staging_buffer_memory, None);
@@ -2053,7 +2054,7 @@ unsafe fn create_image(
 		.allocation_size(requirements.size)
 		.memory_type_index(get_memory_type_index(
 			instance,
-			data,
+			data.physical_device,
 			properties,
 			requirements
 		)?);
@@ -2184,60 +2185,4 @@ unsafe fn create_image_view(
         .subresource_range(subresource_range);
 
     Ok(device.create_image_view(&info, None)?)
-}
-
-//================================================
-// Shared (Other)
-//================================================
-
-unsafe fn get_memory_type_index(
-    instance: &Instance,
-    data: &AppData,
-    properties: vk::MemoryPropertyFlags,
-    requirements: vk::MemoryRequirements,
-) -> Result<u32> {
-    let memory = instance.get_physical_device_memory_properties(data.physical_device);
-    (0..memory.memory_type_count)
-        .find(|i| {
-            let suitable = (requirements.memory_type_bits & (1 << i)) != 0;
-            let memory_type = memory.memory_types[*i as usize];
-            suitable && memory_type.property_flags.contains(properties)
-        })
-        .ok_or_else(|| anyhow!("Failed to find suitable memory type."))
-}
-
-unsafe fn begin_setup_command_buffer(device: &Device, data: &AppData) -> Result<()> {
-    let info = vk::CommandBufferBeginInfo::builder()
-		.flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-	device.begin_command_buffer(data.setup_command_buffer, &info)?;
-
-    Ok(())
-}
-
-unsafe fn create_setup_command_buffer(device: &Device, data: &mut AppData) -> Result<()> {
-    let info = vk::CommandBufferAllocateInfo::builder()
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_pool(data.command_pool)
-        .command_buffer_count(1);
-    
-    let command_buffer = device.allocate_command_buffers(&info)?[0];
-    data.setup_command_buffer = command_buffer;
-
-    Ok(())
-}
-
-unsafe fn flush_command_buffer(device: &Device, data: &AppData) -> Result<()> {
-    device.end_command_buffer(data.setup_command_buffer)?;
-
-    let command_buffers = &[data.setup_command_buffer];
-	let info = vk::SubmitInfo::builder()
-		.command_buffers(command_buffers);
-
-    device.queue_submit(data.graphics_queue, &[info], vk::Fence::null())?;
-	device.queue_wait_idle(data.graphics_queue)?;
-
-    device.reset_command_buffer(data.setup_command_buffer, vk::CommandBufferResetFlags::empty())?;
-
-    Ok(())
 }
