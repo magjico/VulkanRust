@@ -7,6 +7,15 @@ use cgmath::{vec2, vec3};
 
 use crate::geometry::Vertex;
 
+/// Load a .obj 3D model and return its vertices and the associated indexes.
+/// 
+/// # Arguments
+/// 
+/// - `path` (`&str`) - path to the .obj
+/// 
+/// # Returns
+/// 
+/// - `Result<(Vec<Vertex>, Vec<u32>)>` - vertices and indices.
 pub fn load_obj_model(path: &str) -> Result<(Vec<Vertex>, Vec<u32>)> {
     // Model
     let mut reader = BufReader::new(File::open(path)?);

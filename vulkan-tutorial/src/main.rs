@@ -158,7 +158,14 @@ impl App {
             data.msaa_samples,
             data.swapchain_format,
         )?;
-        create_depth_objects(&instance, &device, &mut data)?;
+        (data.depth_image, data.depth_image_memory, data.depth_image_view) = create_depth_objects(
+            &instance,
+            &device,
+            data.physical_device,
+            data.swapchain_extent.width,
+            data.swapchain_extent.height,
+            data.msaa_samples
+        )?;
         create_framebuffers(&device, &mut data)?;
         data.setup_command_buffer = create_setup_command_buffer(&device, data.command_pool)?;
         create_texture_image(&instance, &device, &mut data)?;
@@ -436,7 +443,14 @@ impl App {
             self.data.msaa_samples,
             self.data.swapchain_format,
         )?;
-        create_depth_objects(&self.instance, &self.device, &mut self.data)?;
+        (self.data.depth_image, self.data.depth_image_memory, self.data.depth_image_view) = create_depth_objects(
+            &self.instance,
+            &self.device,
+            self.data.physical_device,
+            self.data.swapchain_extent.width,
+            self.data.swapchain_extent.height,
+            self.data.msaa_samples,
+        )?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
@@ -927,7 +941,7 @@ unsafe fn create_render_pass(instance: &Instance, device: &Device, data: &mut Ap
         .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
-        .format(get_depth_format(instance, data)?)
+        .format(get_depth_format(instance, data.physical_device)?)
         .samples(data.msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -1809,52 +1823,4 @@ unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<
     data.texture_sampler = device.create_sampler(&info, None)?;
 
     Ok(())
-}
-
-//================================================
-// Depth
-//================================================
-
-unsafe fn create_depth_objects(
-    instance: &Instance,
-    device: &Device,
-    data: &mut AppData
-) -> Result<()> {
-    let format = get_depth_format(instance, data)?;
-
-    let (depth_image, depth_image_memory) = create_image(
-        instance,
-        device,
-        data.physical_device,
-        data.swapchain_extent.width,
-        data.swapchain_extent.height,
-        1,
-		data.msaa_samples,
-        format,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL
-    )?;
-
-    data.depth_image = depth_image;
-    data.depth_image_memory = depth_image_memory;
-    data.depth_image_view = create_image_view(device, data.depth_image, format, vk::ImageAspectFlags::DEPTH, 1)?;
-
-    Ok(())
-}
-
-unsafe fn get_depth_format(instance: &Instance, data: &AppData) -> Result<vk::Format> {
-    let candidates = &[
-        vk::Format::D32_SFLOAT,
-        vk::Format::D32_SFLOAT_S8_UINT,
-        vk::Format::D24_UNORM_S8_UINT,
-    ];
-
-    get_supported_format(
-        instance,
-        data.physical_device,
-        candidates,
-        vk::ImageTiling::OPTIMAL,
-        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
-    )
 }
