@@ -7,7 +7,7 @@
     clippy::unnecessary_wraps
 )]
 
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::raw::c_void;
@@ -15,11 +15,10 @@ use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 use std::fs::File;
 use std::io::BufReader;
-use std::hash::{Hash, Hasher};
 
 use anyhow::{Result, anyhow};
 use cgmath::{
-    vec2, vec3,
+    vec3,
     point3,
     Deg,
 };
@@ -45,6 +44,10 @@ use vulkanalia::vk::KhrSwapchainExtensionDeviceCommands;
 use graphic_env::resources::*;
 use graphic_env::gpu::*;
 use graphic_env::ops::*;
+use graphic_env::render::*;
+use graphic_env::assets::*;
+use graphic_env::math::*;
+use graphic_env::geometry::Vertex;
 
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -58,10 +61,6 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
-type Vec2 = cgmath::Vector2<f32>;
-type Vec3 = cgmath::Vector3<f32>;
-type Mat4 = cgmath::Matrix4<f32>;
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -150,7 +149,15 @@ impl App {
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
         create_command_pools(&instance, &device, &mut data)?;
-		create_color_objects(&instance, &device, &mut data)?;
+		(data.color_image, data.color_image_memory, data.color_image_view) = create_color_objects(
+            &instance,
+            &device,
+            data.physical_device,
+            data.swapchain_extent.width,
+            data.swapchain_extent.height,
+            data.msaa_samples,
+            data.swapchain_format,
+        )?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
         data.setup_command_buffer = create_setup_command_buffer(&device, data.command_pool)?;
@@ -158,7 +165,7 @@ impl App {
 		create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
 
-        load_model(&mut data)?;
+        (data.vertices, data.indices) = load_obj_model("resources/3D_meshes/viking_room.obj")?;
         create_interleaved_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
@@ -420,7 +427,15 @@ impl App {
         create_swapchain_image_views(&self.device, &mut self.data)?;
         create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
-		create_color_objects(&self.instance, &self.device, &mut self.data)?;
+        (self.data.color_image, self.data.color_image_memory, self.data.color_image_view) = create_color_objects(
+            &self.instance,
+            &self.device,
+            self.data.physical_device,
+            self.data.swapchain_extent.width,
+            self.data.swapchain_extent.height,
+            self.data.msaa_samples,
+            self.data.swapchain_format,
+        )?;
         create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
@@ -1452,74 +1467,6 @@ impl SwapchainSupport {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct Vertex {
-    pos: Vec3,
-    color: Vec3,
-    tex_coord: Vec2,
-}
-
-impl Vertex {
-    const fn new(pos: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
-        Self { pos, color, tex_coord }
-    }
-
-    fn binding_description() -> vk::VertexInputBindingDescription {
-        vk::VertexInputBindingDescription::builder()
-            .binding(0)
-            .stride(size_of::<Vertex>() as u32)
-            .input_rate(vk::VertexInputRate::VERTEX)
-            .build()
-    }
-
-    fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
-        let pos = vk::VertexInputAttributeDescription::builder()
-            .binding(0)
-            .location(0)
-            .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(0)
-            .build();
-        let color = vk::VertexInputAttributeDescription::builder()
-            .binding(0)
-            .location(1)
-            .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(size_of::<Vec3>() as u32)
-            .build();
-        let tex_coord = vk::VertexInputAttributeDescription::builder()
-            .binding(0)
-            .location(2)
-            .format(vk::Format::R32G32_SFLOAT)
-            .offset((size_of::<Vec3>() + size_of::<Vec3>()) as u32)
-            .build();
-
-        [pos, color, tex_coord]
-    }
-}
-
-impl PartialEq for Vertex {
-    fn eq(&self, other: &Self) -> bool {
-        self.pos == other.pos
-            && self.color == other.color
-            && self.tex_coord == other.tex_coord
-    }
-}
-
-impl Eq for Vertex {}
-
-impl Hash for Vertex {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.pos[0].to_bits().hash(state);
-        self.pos[1].to_bits().hash(state);
-        self.pos[2].to_bits().hash(state);
-        self.color[0].to_bits().hash(state);
-        self.color[1].to_bits().hash(state);
-        self.color[2].to_bits().hash(state);
-        self.tex_coord[0].to_bits().hash(state);
-        self.tex_coord[1].to_bits().hash(state);
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
 struct UniformBufferObject {
     view: Mat4,
     proj: Mat4,
@@ -1910,90 +1857,4 @@ unsafe fn get_depth_format(instance: &Instance, data: &AppData) -> Result<vk::Fo
         vk::ImageTiling::OPTIMAL,
         vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT
     )
-}
-
-//================================================
-// Model loader
-//================================================
-
-fn load_model(data: &mut AppData) -> Result<()> {
-    // Model
-
-    let mut reader = BufReader::new(File::open("resources/3D_meshes/viking_room.obj")?);
-
-    let (models, _) = tobj::load_obj_buf(
-        &mut reader,
-        &tobj::LoadOptions {
-            triangulate: true,
-            ..Default::default()
-        },
-        |_| Ok(Default::default()),
-    )?;
-
-    // Vertices / Indices
-
-    let mut unique_vertices = HashMap::new();
-
-    for model in &models {
-        for index in &model.mesh.indices {
-            let pos_offset = (3 * index) as usize;
-            let tex_coord_offset = (2 * index) as usize;
-
-            let vertex = Vertex {
-                pos: vec3(
-                    model.mesh.positions[pos_offset],
-                    model.mesh.positions[pos_offset + 1],
-                    model.mesh.positions[pos_offset + 2],
-                ),
-                color: vec3(1.0, 1.0, 1.0),
-                tex_coord: vec2(
-                    model.mesh.texcoords[tex_coord_offset],
-                    1.0 - model.mesh.texcoords[tex_coord_offset + 1],
-                ),
-            };
-
-            if let Some(index) = unique_vertices.get(&vertex) {
-                data.indices.push(*index as u32);
-            } else {
-                let index = data.vertices.len();
-                unique_vertices.insert(vertex, index);
-                data.vertices.push(vertex);
-                data.indices.push(index as u32);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-//================================================
-// Color Objects
-//================================================
-
-unsafe fn create_color_objects(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-	let (color_image, color_image_memory) = create_image(
-		instance,
-		device,
-		data.physical_device,
-        data.swapchain_extent.width,
-		data.swapchain_extent.height,
-		1,
-		data.msaa_samples, 
-		data.swapchain_format,
-		vk::ImageTiling::OPTIMAL,
-		vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-		vk::MemoryPropertyFlags::DEVICE_LOCAL
-	)?;
-
-	data.color_image = color_image;
-	data.color_image_memory = color_image_memory;
-	data.color_image_view = create_image_view(
-		device,
-		data.color_image,
-		data.swapchain_format,
-		vk::ImageAspectFlags::COLOR,
-		1
-	)?;
-
-	Ok(())
 }

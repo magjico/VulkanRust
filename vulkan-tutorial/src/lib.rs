@@ -1,3 +1,7 @@
 pub mod resources;
 pub mod gpu;
 pub mod ops;
+pub mod render;
+pub mod assets;
+pub mod geometry;
+pub mod math;
