@@ -2,6 +2,52 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
+use crate::gpu::get_memory_type_index;
+
+//================================================
+// Buffers (general)
+//================================================
+
+/// Create and return a buffer and its memory object.
+/// 
+/// ## Arguments
+/// 
+/// - `instance` (&[`Instance`]) - Vulkan instance.
+/// - `device` (&[`Device`]) - Vulkan device.
+/// - `physical_device` ([`vk::PhysicalDevice`]) - The physical device.
+/// - `size` ([`vk::DeviceSize`]) - Buffer size to allocate.
+/// - `usage` ([`vk::BufferUsageFlags`]) - Buffer usage for optimization.
+/// - `properties` ([`vk::MemoryPropertyFlags`]) - Buffer properties.
+pub fn create_buffer(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    size: vk::DeviceSize,
+    usage: vk::BufferUsageFlags,
+    properties: vk::MemoryPropertyFlags,
+) -> Result<(vk::Buffer, vk::DeviceMemory)> {
+    // Buffer initialization
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size(size)
+        .usage(usage)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+    let buffer = unsafe { device.create_buffer(&buffer_info, None)? };
+
+    // Memory allocation
+    let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+
+    let memory_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(requirements.size)
+        .memory_type_index(get_memory_type_index(instance, physical_device, properties, requirements)?);
+
+    let buffer_memory = unsafe { device.allocate_memory(&memory_info, None)? };
+
+    unsafe { device.bind_buffer_memory(buffer, buffer_memory, 0)? };
+
+    Ok((buffer, buffer_memory))
+}
+
 //================================================
 // setup command buffer
 //================================================

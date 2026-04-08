@@ -9,7 +9,7 @@ use crate::resources::{get_supported_format, create_image, create_image_view};
 /// - Depth image memory to link it to the swapchain
 /// - Depth image view, the image view.
 /// 
-/// # Arguments
+/// ## Arguments
 /// 
 /// - `instance` (&[`Instance`]) - The Vulkan instance.
 /// - `device` (&[`Device`]) - The Vulkan device.
@@ -18,7 +18,7 @@ use crate::resources::{get_supported_format, create_image, create_image_view};
 /// - `height` (`u32`) - wanted image height.
 /// - `samples_count` ([`vk::SampleCountFlags`]) - number of multi-sampling to generate.
 /// 
-/// # Returns
+/// ## Returns
 /// 
 /// - `Result<(vk::Image, vk::DeviceMemory, vk::ImageView)>`.
 pub fn create_depth_objects(
