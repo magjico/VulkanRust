@@ -48,6 +48,50 @@ pub fn create_buffer(
     Ok((buffer, buffer_memory))
 }
 
+/// Copy element from one source buffer to a destination buffer
+/// 
+/// ## Arguments
+/// 
+/// - `device` (&[`Device`]) - Vulkan device.
+/// - `source` ([`vk::Buffer`]) - src buffer to copy.
+/// - `destination` ([`vk::Buffer`]) - destination buffer to receive the copy.
+/// - `setup_command_buffer` ([`vk::CommandBuffer`]) - command buffer to manage command.
+/// - `sizes` (`&[vk::DeviceSize]`) - byte size of each region to copy.
+/// - `dst_offsets` (`&[vk::DeviceSize]`) - where in the destination buffer should each region be copied.
+/// - `graphics_queue` ([`vk::Queue`]) - the graphic queue to execute (gpu) command needed for the use of the setup command buffer.
+pub fn copy_buffers(
+    device: &Device,
+    source: vk::Buffer,
+    destination: vk::Buffer,
+    setup_command_buffer: vk::CommandBuffer,
+    sizes: &[vk::DeviceSize],
+    dst_offsets: &[vk::DeviceSize],
+    graphics_queue: vk::Queue,
+) -> Result<()> {
+    begin_setup_command_buffer(&device, setup_command_buffer)?;
+
+    // Commands
+    let mut src_offset = 0;
+    let mut regions = Vec::<vk::BufferCopy>::with_capacity(sizes.len());
+
+    for (i, &size) in sizes.iter().enumerate() {
+        regions.push(
+            vk::BufferCopy::builder()
+                .src_offset(src_offset)
+                .dst_offset(dst_offsets[i])
+                .size(size)
+                .build()
+        );
+
+        src_offset += size;
+    }
+    unsafe { device.cmd_copy_buffer(setup_command_buffer, source, destination, &regions) };
+
+    flush_setup_command_buffer(&device, setup_command_buffer, graphics_queue)?;
+
+    Ok(())
+}
+
 //================================================
 // setup command buffer
 //================================================

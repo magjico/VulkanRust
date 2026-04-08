@@ -1288,11 +1288,12 @@ unsafe fn create_interleaved_buffer(instance: &Instance, device: &Device, data: 
     // Copy
     copy_buffers(
         device,
-        data,
         staging_buffer,
         interleaved_buffer,
+        data.setup_command_buffer,
         &[vertex_size, index_size],
-        &[0, aligned_vertex_size]
+        &[0, aligned_vertex_size],
+        data.graphics_queue,
     )?;
 
     // Cleanup
@@ -1492,40 +1493,4 @@ impl SwapchainSupport {
 struct UniformBufferObject {
     view: Mat4,
     proj: Mat4,
-}
-
-//================================================
-// Shared (Buffers)
-//================================================
-
-unsafe fn copy_buffers(
-    device: &Device,
-    data: &AppData,
-    source: vk::Buffer,
-    destination: vk::Buffer,
-    sizes: &[vk::DeviceSize],
-    dst_offsets: &[vk::DeviceSize],
-) -> Result<()> {
-    begin_setup_command_buffer(&device, data.setup_command_buffer)?;
-
-    // Commands
-    let mut src_offset = 0;
-    let mut regions = Vec::<vk::BufferCopy>::with_capacity(sizes.len());
-
-    for (i, &size) in sizes.iter().enumerate() {
-        regions.push(
-            vk::BufferCopy::builder()
-                .src_offset(src_offset)
-                .dst_offset(dst_offsets[i])
-                .size(size)
-                .build()
-        );
-
-        src_offset += size;
-    }
-    device.cmd_copy_buffer(data.setup_command_buffer, source, destination, &regions);
-
-    flush_setup_command_buffer(&device, data.setup_command_buffer, data.graphics_queue)?;
-
-    Ok(())
 }
