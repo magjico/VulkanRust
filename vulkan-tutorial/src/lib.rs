@@ -5,3 +5,4 @@ pub mod render;
 pub mod assets;
 pub mod geometry;
 pub mod math;
+pub mod setup;

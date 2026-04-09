@@ -43,6 +43,7 @@ use graphic_env::assets::*;
 use graphic_env::math::*;
 use graphic_env::geometry::Vertex;
 use graphic_env::gpu::*;
+use graphic_env::setup::*;
 
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -183,9 +184,20 @@ impl App {
         (data.vertices, data.indices) = load_obj_model(MESH_PATH)?;
         create_interleaved_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
-        create_descriptor_pool(&device, &mut data)?;
-        create_descriptor_sets(&device, &mut data)?;
-        create_command_buffers(&device, &mut data)?;
+        data.descriptor_pool = create_descriptor_pool(&device, data.swapchain_images.len() as u32)?;
+        data.descriptor_sets = create_descriptor_sets(
+            &device,
+            data.swapchain_images.len(),
+            data.descriptor_set_layout,
+            data.descriptor_pool,
+            &data.uniform_buffers,
+            data.texture_image_view,
+            data.texture_sampler
+        )?;
+        (data.command_buffers, data.secondary_command_buffers) = create_command_buffers(
+            &device,
+            &data.command_pools
+        )?;
         (data.image_available_semaphores, data.render_finished_semaphores, data.in_flight_fences, data.images_in_flight) = create_sync_objects(
             &device,
             MAX_FRAMES_IN_FLIGHT,
@@ -465,9 +477,20 @@ impl App {
         )?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
-        create_descriptor_pool(&self.device, &mut self.data)?;
-        create_descriptor_sets(&self.device, &mut self.data)?;
-        create_command_buffers(&self.device, &mut self.data)?;
+        self.data.descriptor_pool = create_descriptor_pool(&self.device, self.data.swapchain_images.len() as u32)?;
+        self.data.descriptor_sets = create_descriptor_sets(
+            &self.device,
+            self.data.swapchain_images.len(),
+            self.data.descriptor_set_layout,
+            self.data.descriptor_pool,
+            &self.data.uniform_buffers,
+            self.data.texture_image_view,
+            self.data.texture_sampler
+        )?;
+        (self.data.command_buffers, self.data.secondary_command_buffers) = create_command_buffers(
+            &self.device,
+            &self.data.command_pools
+        )?;
         self.data.images_in_flight.resize(self.data.swapchain_images.len(), vk::Fence::null());
         Ok(())
     }
@@ -1323,92 +1346,6 @@ unsafe fn create_uniform_buffers(
         data.uniform_buffers.push(uniform_buffer);
         data.uniform_buffers_memory.push(uniform_buffer_memory);
     }
-
-    Ok(())
-}
-
-//================================================
-// Descriptors
-//================================================
-
-unsafe fn create_descriptor_pool(device: &Device, data: &mut AppData) -> Result<()> {
-    let ubo_size = vk::DescriptorPoolSize::builder()
-        .type_(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(data.swapchain_images.len() as u32);
-
-    let sampler_size = vk::DescriptorPoolSize::builder()
-        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(data.swapchain_images.len() as u32);
-
-    let pool_sizes = &[ubo_size, sampler_size];
-    let info = vk::DescriptorPoolCreateInfo::builder()
-        .pool_sizes(pool_sizes)
-        .max_sets(data.swapchain_images.len() as u32);
-
-    data.descriptor_pool = device.create_descriptor_pool(&info, None)?;
-
-    Ok(())
-}
-
-unsafe fn create_descriptor_sets(device: &Device, data: &mut AppData) -> Result<()> {
-    let layouts = vec![data.descriptor_set_layout; data.swapchain_images.len()];
-    let info = vk::DescriptorSetAllocateInfo::builder()
-        .descriptor_pool(data.descriptor_pool)
-        .set_layouts(&layouts);
-
-    data.descriptor_sets = device.allocate_descriptor_sets(&info)?;
-
-    for i in 0..data.swapchain_images.len() {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(data.uniform_buffers[i])
-            .offset(0)
-            .range(size_of::<UniformBufferObject>() as u64);
-
-        let buffer_info = &[info];
-        let ubo_write = vk::WriteDescriptorSet::builder()
-            .dst_set(data.descriptor_sets[i])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(buffer_info);
-
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(data.texture_image_view)
-            .sampler(data.texture_sampler);
-
-        let image_info = &[info];
-        let sampler_write = vk::WriteDescriptorSet::builder()
-            .dst_set(data.descriptor_sets[i])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(image_info);
-
-        device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]);
-    }
-
-    Ok(())
-}
-
-//================================================
-// Command Buffers
-//================================================
-
-unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
-    // command pool association
-    let num_image = data.swapchain_images.len();
-    for image_index in 0..num_image {
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(data.command_pools[image_index])
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let command_buffer = device.allocate_command_buffers(&allocate_info)?[0];
-        data.command_buffers.push(command_buffer);
-    }
-
-    data.secondary_command_buffers = vec![vec![]; data.swapchain_images.len()];
 
     Ok(())
 }

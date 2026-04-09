@@ -93,7 +93,8 @@ pub fn copy_buffers(
 }
 
 //================================================
-// setup command buffer
+// "setup" command buffer
+// (not to setup command buffer, but to create a special command buffer)
 //================================================
 
 /// Create a **setup command buffer** and return it.

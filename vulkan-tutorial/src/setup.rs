@@ -1,0 +1,204 @@
+/// Setup multiple **specific** app objects
+use anyhow::Result;
+
+use vulkanalia::prelude::v1_0::*;
+
+use crate::render::UniformBufferObject;
+
+//===============================================
+// Descriptors
+//===============================================
+
+/// Generate a descriptor pool to allocate multiple descriptor sets.
+/// so that a shader can access UBO and texture sampling from our shaders 
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `swapchain_images_count` (`u32`) - number of swapchain images (we will generate a descriptor set by image).
+/// 
+/// ## Returns
+/// 
+/// - `Result<vk::DescriptorPool>`.
+pub fn create_descriptor_pool(
+    device: &Device,
+    swapchain_images_count: u32
+) -> Result<vk::DescriptorPool> {
+    let ubo_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(swapchain_images_count);
+
+    let sampler_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(swapchain_images_count);
+
+    let pool_sizes = &[ubo_size, sampler_size];
+    let info = vk::DescriptorPoolCreateInfo::builder()
+        .pool_sizes(pool_sizes)
+        .max_sets(swapchain_images_count);
+
+    let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
+
+    Ok(descriptor_pool)
+}
+
+/// Generate multiple descriptor set for each swapchain image.
+/// With those the shaders will have access to the UBO and texture sampling.
+/// 
+/// note: you can only use this function after generating the descriptor pool for it.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `swapchain_images_count` (`usize`) - number of swapchain images.
+/// - `descriptor_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_descriptor_set_layout].
+/// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
+/// - `uniform_buffers` (`&[vk::Buffer]`).
+/// - `texture_image_view` ( [vk::ImageView] ).
+/// - `texture_sampler` ( [vk::Sampler] ) - texture sampler.
+/// 
+/// ## Returns
+/// 
+/// - `Result<Vec<vk::DescriptorSet>>`.
+pub fn create_descriptor_sets(
+    device: &Device,
+    swapchain_images_count: usize,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    uniform_buffers: &[vk::Buffer],
+    texture_image_view: vk::ImageView,
+    texture_sampler: vk::Sampler,
+) -> Result<Vec<vk::DescriptorSet>> {
+    let layouts = vec![descriptor_set_layout; swapchain_images_count];
+
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(&layouts);
+
+    // to return
+    let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
+
+    for i in 0..swapchain_images_count {
+        let info = vk::DescriptorBufferInfo::builder()
+            .buffer(uniform_buffers[i])
+            .offset(0)
+            .range(size_of::<UniformBufferObject>() as u64);
+
+        let buffer_info = &[info];
+        let ubo_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(buffer_info);
+
+        let info = vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(texture_image_view)
+            .sampler(texture_sampler);
+
+        let image_info = &[info];
+        let sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(1)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(image_info);
+
+        unsafe { device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+    }
+
+    Ok(descriptor_sets)
+}
+
+//===============================================
+// Command Buffers
+//===============================================
+
+/// Generate a command buffer for each swapchain images with the command pool associated pass as an argument,
+/// also generate an **empty** vector of secondary command buffers for each command buffer.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `swapchain_image_count` (`usize`) - The number of swapchain image.
+/// - `command_pools` (`Vec<vk`) - Command pools to create the command buffer from.
+/// 
+/// ## Returns
+/// 
+/// - `Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)>` - A vector of command buffer and a vector of vector of secondary command buffer.
+/// ```
+pub fn create_command_buffers(
+    device: &Device,
+    command_pools: &[vk::CommandPool],
+) -> Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)> {
+    let mut command_buffers = Vec::new();
+
+    // command pool association
+    for pool in command_pools {
+        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(*pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
+        command_buffers.push(command_buffer);
+    }
+
+    let secondary_command_buffers: Vec<Vec<vk::CommandBuffer>> = vec![vec![]; command_buffers.len()];
+
+    Ok((command_buffers, secondary_command_buffers))
+}
+
+//===============================================
+// Sync objects
+//===============================================
+
+/// Create all the sync objects necessary for the render pipeline
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `max_frame_in_flight` (`usize`) - max supported frame in flight for assigning semaphores and fences.
+/// - `swapchain_images_count` (`usize`) - max number of swapchain image (at the same time) for fences.
+/// 
+/// ## Returns
+/// 
+/// `Result<(Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>, Vec<vk::Fence>)>`:
+/// - First a `Vec<vk::Semaphore>` for **synchronising the KHR image retrieval**.
+/// - Second a `Vec<vk::Semaphore>` for **synchronising when an image finish to render (so we can use it for something else)**.
+/// - Third a `Vec<vk::Fence>` to **await the GPU operation on in flight frame before rendering them**.
+/// - Fourth a `Vec<vk::Fence>` to **protect a swapchain image to be acquire by 2 differents frames in flight**.
+pub fn create_sync_objects(
+    device: &Device,
+    max_frame_in_flight: usize,
+    swapchain_images_count: usize,
+) -> Result<(Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>, Vec<vk::Fence>)> {
+    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+
+    let mut image_available_semaphores: Vec<vk::Semaphore> = Vec::new();
+    let mut render_finished_semaphores: Vec<vk::Semaphore> = Vec::new();
+    let mut in_flight_fences: Vec<vk::Fence> = Vec::new();
+    let images_in_flight: Vec<vk::Fence>;
+
+    unsafe {
+        for _ in 0..max_frame_in_flight {
+            image_available_semaphores
+                .push(device.create_semaphore(&semaphore_info, None)?);
+            render_finished_semaphores
+                .push(device.create_semaphore(&semaphore_info, None)?);
+
+            in_flight_fences.push(device.create_fence(&fence_info, None)?);
+        }
+
+        images_in_flight = (0..swapchain_images_count).map(|_| vk::Fence::null()).collect();
+    }
+
+    Ok((
+        image_available_semaphores,
+        render_finished_semaphores,
+        in_flight_fences,
+        images_in_flight
+    ))
+}
