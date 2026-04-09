@@ -3,6 +3,7 @@ mod depth;
 mod texture;
 mod uniform;
 mod swapchain;
+mod sync;
 
 pub use color::create_color_objects;
 
@@ -17,3 +18,5 @@ pub use texture::generate_mipmaps;
 pub use uniform::UniformBufferObject;
 
 pub use swapchain::SwapchainSupport;
+
+pub use sync::create_sync_objects;

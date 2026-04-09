@@ -21,7 +21,6 @@ use cgmath::{
     Deg,
 };
 use log::*;
-use thiserror::Error;
 
 use vulkanalia::Version;
 use vulkanalia::bytecode::Bytecode;
@@ -43,6 +42,7 @@ use graphic_env::render::*;
 use graphic_env::assets::*;
 use graphic_env::math::*;
 use graphic_env::geometry::Vertex;
+use graphic_env::gpu::*;
 
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -186,7 +186,11 @@ impl App {
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
-        create_sync_objects(&device, &mut data)?;
+        (data.image_available_semaphores, data.render_finished_semaphores, data.in_flight_fences, data.images_in_flight) = create_sync_objects(
+            &device,
+            MAX_FRAMES_IN_FLIGHT,
+            data.swapchain_images.len()
+        )?;
         Ok(Self {
             entry,
             instance,
@@ -694,11 +698,6 @@ extern "system" fn debug_callback(
 //================================================
 // Physical Device
 //================================================
-
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct SuitabilityError(pub &'static str);
-
 unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
     for physical_device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(physical_device);
@@ -721,7 +720,7 @@ unsafe fn check_physical_device(
     data: &AppData,
     physical_device: vk::PhysicalDevice,
 ) -> Result<()> {
-    QueueFamilyIndices::get(instance, data, physical_device)?;
+    QueueFamilyIndices::get(instance, physical_device, data.surface)?;
     check_physical_device_extensions(instance, physical_device)?;
 
     let support = SwapchainSupport::get(instance, data.surface, physical_device)?;
@@ -777,7 +776,7 @@ unsafe fn get_max_msaa_samples(
 
 unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut AppData) -> Result<Device> {
     // Queue Create Infos
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
 
     let mut unique_indices = HashSet::new();
     unique_indices.insert(indices.graphics);
@@ -837,7 +836,7 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
 unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
     // Image
 
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
     let support = SwapchainSupport::get(instance, data.surface, data.physical_device)?;
 
     let surface_format = get_swapchain_surface_format(&support.formats);
@@ -1218,7 +1217,7 @@ unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()>
 //================================================
 
 unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut AppData) -> Result<vk::CommandPool> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
 
     let info = vk::CommandPoolCreateInfo::builder()
         .queue_family_index(indices.graphics)
@@ -1412,61 +1411,4 @@ unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<
     data.secondary_command_buffers = vec![vec![]; data.swapchain_images.len()];
 
     Ok(())
-}
-
-//================================================
-// Sync Objects
-//================================================
-
-unsafe fn create_sync_objects(device: &Device, data: &mut AppData) -> Result<()> {
-    let semaphore_info = vk::SemaphoreCreateInfo::builder();
-    let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-
-    for _ in 0..MAX_FRAMES_IN_FLIGHT {
-        data.image_available_semaphores
-            .push(device.create_semaphore(&semaphore_info, None)?);
-        data.render_finished_semaphores
-            .push(device.create_semaphore(&semaphore_info, None)?);
-
-        data.in_flight_fences.push(device.create_fence(&fence_info, None)?);
-    }
-
-    data.images_in_flight = data.swapchain_images.iter().map(|_| vk::Fence::null()).collect();
-
-    Ok(())
-}
-
-//================================================
-// Structs
-//================================================
-
-#[derive(Copy, Clone, Debug)]
-struct QueueFamilyIndices {
-    graphics: u32,
-    present: u32,
-}
-
-impl QueueFamilyIndices {
-    unsafe fn get(instance: &Instance, data: &AppData, physical_device: vk::PhysicalDevice) -> Result<Self> {
-        let properties = instance.get_physical_device_queue_family_properties(physical_device);
-
-        let graphics = properties
-            .iter()
-            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|i| i as u32);
-
-        let mut present = None;
-        for (index, properties) in properties.iter().enumerate() {
-            if instance.get_physical_device_surface_support_khr(physical_device, index as u32, data.surface)? {
-                present = Some(index as u32);
-                break;
-            }
-        }
-
-        if let (Some(graphics), Some(present)) = (graphics, present) {
-            Ok(Self { graphics, present })
-        } else {
-            Err(anyhow!(SuitabilityError("Missing required queue families.")))
-        }
-    }
 }
