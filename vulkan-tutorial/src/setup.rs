@@ -112,45 +112,6 @@ pub fn create_descriptor_sets(
 }
 
 //===============================================
-// Command Buffers
-//===============================================
-
-/// Generate a command buffer for each swapchain images with the command pool associated pass as an argument,
-/// also generate an **empty** vector of secondary command buffers for each command buffer.
-/// 
-/// ## Arguments
-/// 
-/// - `device` ( &[Device] ) - The Vulkan device.
-/// - `swapchain_image_count` (`usize`) - The number of swapchain image.
-/// - `command_pools` (`Vec<vk`) - Command pools to create the command buffer from.
-/// 
-/// ## Returns
-/// 
-/// - `Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)>` - A vector of command buffer and a vector of vector of secondary command buffer.
-/// ```
-pub fn create_command_buffers(
-    device: &Device,
-    command_pools: &[vk::CommandPool],
-) -> Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)> {
-    let mut command_buffers = Vec::new();
-
-    // command pool association
-    for pool in command_pools {
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(*pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
-        command_buffers.push(command_buffer);
-    }
-
-    let secondary_command_buffers: Vec<Vec<vk::CommandBuffer>> = vec![vec![]; command_buffers.len()];
-
-    Ok((command_buffers, secondary_command_buffers))
-}
-
-//===============================================
 // Sync objects
 //===============================================
 

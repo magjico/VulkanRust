@@ -3,6 +3,7 @@ use anyhow::Result;
 use vulkanalia::prelude::v1_0::*;
 
 use crate::gpu::get_memory_type_index;
+use crate::render::UniformBufferObject;
 
 //================================================
 // Buffers (general)
@@ -90,6 +91,140 @@ pub fn copy_buffers(
     flush_setup_command_buffer(&device, setup_command_buffer, graphics_queue)?;
 
     Ok(())
+}
+
+/// Destroy a list of buffers and free their memories
+/// 
+/// ## Arguments
+/// 
+/// - `device` (`&Device`) - Vulkan Device.
+/// - `buffers` (`&[vk`) - the buffers to destroys.
+/// - `buffers_memory` (`&[vk`) - the memories to free.
+pub fn destroy_buffers(
+    device: &Device,
+    buffers: &[vk::Buffer],
+    buffers_memory: &[vk::DeviceMemory]
+) {
+    unsafe {
+        buffers_memory.iter().for_each(|mem| device.free_memory(*mem, None));
+        buffers.iter().for_each(|buf| device.destroy_buffer(*buf, None));
+    };
+}
+
+//===============================================
+// Uniform Buffers
+//===============================================
+
+/// Create the selected number of uniform buffers, and their associated memory.
+/// Then return them. 
+/// 
+/// ## Arguments
+/// 
+/// - `instance` ( &[Instance] ) - Vulkan instance.
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `physical_device` ( [vk::PhysicalDevice] ) - a physical device.
+/// - `count` ( usize ) - number of buffers to create.
+/// 
+/// # Returns
+/// 
+/// - `Result<(Vec<vk::Buffer>, Vec<vk::DeviceMemory>)>` - the buffers and their memories.
+pub fn create_uniform_buffers(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    count: usize,
+) -> Result<(Vec<vk::Buffer>, Vec<vk::DeviceMemory>)> {
+    let mut uniform_buffers = Vec::new();
+    let mut uniform_buffers_memory = Vec::new();
+
+    for _ in 0..count {
+        let (uniform_buffer, uniform_buffer_memory) = create_buffer(
+            instance,
+            device,
+            physical_device,
+            size_of::<UniformBufferObject>() as u64,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
+        )?;
+
+        uniform_buffers.push(uniform_buffer);
+        uniform_buffers_memory.push(uniform_buffer_memory);
+    }
+    
+
+    Ok((uniform_buffers, uniform_buffers_memory))
+
+}
+
+/// Re-create a list of uniform buffers and their memories
+/// 
+/// # Arguments
+/// 
+/// - `instance` (`&Instance`) - Vulkan instance.
+/// - `device` (`&Device`) - Vulkan device.
+/// - `physical_device` (`vk`) - a physical device.
+/// - `uniform_buffers` (`&mut Vec<vk`) - the uniform buffers to recreates.
+/// - `uniform_buffers_memory` (`&mut Vec<vk`) - the uniform buffers memories associated.
+/// - `count` (`usize`) - the number of buffers to recreate.
+pub fn recreate_uniform_buffers(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    uniform_buffers: &mut Vec<vk::Buffer>,
+    uniform_buffers_memory: &mut Vec<vk::DeviceMemory>,
+    count: usize,
+) -> Result<()> {
+    destroy_buffers(&device, &uniform_buffers, &uniform_buffers_memory);
+
+    // TODO: Maybe this should recreate the exact same number of buffer
+    // so we can get rid of the count args for .len() 
+    (*uniform_buffers, *uniform_buffers_memory) = create_uniform_buffers(
+        &instance,
+        &device,
+        physical_device,
+        count
+    )?;
+
+    Ok(())
+}
+
+//===============================================
+// Command Buffers
+//===============================================
+
+/// Generate a vector of command buffer for each swapchain images with the command pool associated pass as an argument,
+/// also generate an **empty** vector of secondary command buffers for each command buffer.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `swapchain_image_count` (`usize`) - The number of swapchain image.
+/// - `command_pools` (`Vec<vk`) - Command pools to create the command buffer from.
+/// 
+/// ## Returns
+/// 
+/// - `Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)>` - A vector of command buffer and a vector of vector of secondary command buffer.
+/// ```
+pub fn create_command_buffers(
+    device: &Device,
+    command_pools: &[vk::CommandPool],
+) -> Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)> {
+    let mut command_buffers = Vec::new();
+
+    // command pool association
+    for pool in command_pools {
+        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(*pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
+        command_buffers.push(command_buffer);
+    }
+
+    let secondary_command_buffers: Vec<Vec<vk::CommandBuffer>> = vec![vec![]; command_buffers.len()];
+
+    Ok((command_buffers, secondary_command_buffers))
 }
 
 //================================================

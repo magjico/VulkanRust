@@ -183,7 +183,12 @@ impl App {
 
         (data.vertices, data.indices) = load_obj_model(MESH_PATH)?;
         create_interleaved_buffer(&instance, &device, &mut data)?;
-        create_uniform_buffers(&instance, &device, &mut data)?;
+        (data.uniform_buffers, data.uniform_buffers_memory) = create_uniform_buffers(
+            &instance,
+            &device,
+            data.physical_device,
+            data.swapchain_images.len(),
+        )?;
         data.descriptor_pool = create_descriptor_pool(&device, data.swapchain_images.len() as u32)?;
         data.descriptor_sets = create_descriptor_sets(
             &device,
@@ -476,7 +481,12 @@ impl App {
             self.data.msaa_samples,
         )?;
         create_framebuffers(&self.device, &mut self.data)?;
-        create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
+        (self.data.uniform_buffers, self.data.uniform_buffers_memory) = create_uniform_buffers(
+            &self.instance,
+            &self.device,
+            self.data.physical_device,
+            self.data.swapchain_images.len()
+        )?;
         self.data.descriptor_pool = create_descriptor_pool(&self.device, self.data.swapchain_images.len() as u32)?;
         self.data.descriptor_sets = create_descriptor_sets(
             &self.device,
@@ -529,8 +539,7 @@ impl App {
     #[rustfmt::skip]
     unsafe fn destroy_swapchain(&mut self) {
         self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
-        self.data.uniform_buffers_memory.iter().for_each(|m| self.device.free_memory(*m, None));
-        self.data.uniform_buffers.iter().for_each(|b| self.device.destroy_buffer(*b, None));
+        destroy_buffers(&self.device, &self.data.uniform_buffers, &self.data.uniform_buffers_memory);
         self.device.destroy_image_view(self.data.depth_image_view, None);
         self.device.free_memory(self.data.depth_image_memory, None);
         self.device.destroy_image(self.data.depth_image, None);
@@ -1321,31 +1330,6 @@ unsafe fn create_interleaved_buffer(instance: &Instance, device: &Device, data: 
     // Cleanup
     device.destroy_buffer(staging_buffer, None);
     device.free_memory(staging_buffer_memory, None);
-
-    Ok(())
-}
-
-unsafe fn create_uniform_buffers(
-    instance: &Instance,
-    device: &Device,
-    data: &mut AppData,
-) -> Result<()> {
-    data.uniform_buffers.clear();
-    data.uniform_buffers_memory.clear();
-
-    for _ in 0..data.swapchain_images.len() {
-        let (uniform_buffer, uniform_buffer_memory) = create_buffer(
-            instance,
-            device,
-            data.physical_device,
-            size_of::<UniformBufferObject>() as u64,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
-        )?;
-
-        data.uniform_buffers.push(uniform_buffer);
-        data.uniform_buffers_memory.push(uniform_buffer_memory);
-    }
 
     Ok(())
 }
