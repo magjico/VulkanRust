@@ -138,12 +138,33 @@ struct App {
 impl App {
     /// Creates our Vulkan app.
     unsafe fn create(window: &Window) -> Result<Self> {
+        // TODO: move all params into a param file.
+        let mandatory_feats = vk::PhysicalDeviceFeatures::builder()
+            .sampler_anisotropy(true)
+            .build();
+
+        let optional_feats = vk::PhysicalDeviceFeatures::builder()
+            .build();
+
+        let mandatory_queue_flags = vk::QueueFlags::GRAPHICS;
+
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
         data.surface = vk_window::create_surface(&instance, &window, &window)?;
-        pick_physical_device(&instance, &mut data)?;
+        data.physical_device = pick_best_physical_device(
+            &instance,
+            data.surface,
+            &mandatory_feats,
+            &optional_feats,
+            &DEVICE_EXTENSIONS,
+            &[] as &[vk::ExtensionName],
+            mandatory_queue_flags,
+            false
+        )?;
+        data.msaa_samples = get_max_msaa_samples(&instance, data.physical_device);
+
         let device = create_logical_device(&entry, &instance, &mut data)?;
         create_swapchain(window, &instance, &device, &mut data)?;
         create_swapchain_image_views(&device, &mut data)?;
@@ -182,7 +203,15 @@ impl App {
         data.texture_sampler = create_texture_sampler(&device, data.mip_levels as f32)?;
 
         (data.vertices, data.indices) = load_obj_model(MESH_PATH)?;
-        create_interleaved_buffer(&instance, &device, &mut data)?;
+        (data.interleaved_buffer, data.interleaved_buffer_memory, data.index_offset) = create_interleaved_buffer(
+            &instance,
+            &device,
+            data.physical_device,
+            &data.vertices,
+            &data.indices,
+            data.setup_command_buffer,
+            data.graphics_queue,
+        )?;
         (data.uniform_buffers, data.uniform_buffers_memory) = create_uniform_buffers(
             &instance,
             &device,
@@ -520,8 +549,7 @@ impl App {
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
-        self.device.destroy_buffer(self.data.interleaved_buffer, None);
-        self.device.free_memory(self.data.interleaved_buffer_memory, None);
+        destroy_buffers(&self.device, &[self.data.interleaved_buffer], &[self.data.interleaved_buffer_memory]);
         self.data.command_pools.iter().for_each(|c| self.device.destroy_command_pool(*c, None));
         self.device.free_command_buffers(self.data.command_pool, &[self.data.setup_command_buffer]);
         self.device.destroy_command_pool(self.data.command_pool, None);
@@ -727,81 +755,6 @@ extern "system" fn debug_callback(
     vk::FALSE
 }
 
-//================================================
-// Physical Device
-//================================================
-unsafe fn pick_physical_device(instance: &Instance, data: &mut AppData) -> Result<()> {
-    for physical_device in instance.enumerate_physical_devices()? {
-        let properties = instance.get_physical_device_properties(physical_device);
-
-        if let Err(error) = check_physical_device(instance, data, physical_device) {
-            warn!("Skipping physical device (`{}`): {}", properties.device_name, error);
-        } else {
-            info!("Selected physical device (`{}`).", properties.device_name);
-            data.physical_device = physical_device;
-			data.msaa_samples = get_max_msaa_samples(instance, data);
-            return Ok(());
-        }
-    }
-
-    Err(anyhow!("Failed to find suitable physical device."))
-}
-
-unsafe fn check_physical_device(
-    instance: &Instance,
-    data: &AppData,
-    physical_device: vk::PhysicalDevice,
-) -> Result<()> {
-    QueueFamilyIndices::get(instance, physical_device, data.surface)?;
-    check_physical_device_extensions(instance, physical_device)?;
-
-    let support = SwapchainSupport::get(instance, data.surface, physical_device)?;
-    if support.formats.is_empty() || support.present_modes.is_empty() {
-        return Err(anyhow!(SuitabilityError("Insufficient swapchain support.")));
-    }
-
-    let features = instance.get_physical_device_features(physical_device);
-    if features.sampler_anisotropy != vk::TRUE {
-        return  Err(anyhow!(SuitabilityError("No anisotropy sampler")));
-    }
-
-    Ok(())
-}
-
-unsafe fn check_physical_device_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<()> {
-    let extensions = instance
-        .enumerate_device_extension_properties(physical_device, None)?
-        .iter()
-        .map(|e| e.extension_name)
-        .collect::<HashSet<_>>();
-    if DEVICE_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
-        Ok(())
-    } else {
-        Err(anyhow!(SuitabilityError("Missing required device extensions.")))
-    }
-}
-
-unsafe fn get_max_msaa_samples(
-	instance: &Instance,
-	data: &AppData,
-) -> vk::SampleCountFlags {
-	let properties = instance.get_physical_device_properties(data.physical_device);
-	let counts = properties.limits.framebuffer_color_sample_counts
-		& properties.limits.framebuffer_depth_sample_counts;
-
-	[
-		vk::SampleCountFlags::_64,
-		vk::SampleCountFlags::_32,
-		vk::SampleCountFlags::_16,
-		vk::SampleCountFlags::_8,
-		vk::SampleCountFlags::_4,
-		vk::SampleCountFlags::_2,
-	]
-	.iter()
-	.cloned()
-	.find(|c| counts.contains(*c))
-	.unwrap_or(vk::SampleCountFlags::_1)
-}
 //================================================
 // Logical Device
 //================================================
@@ -1266,70 +1219,6 @@ unsafe fn create_command_pools(instance: &Instance, device: &Device, data: &mut 
         let command_pool = create_command_pool(instance, device, data)?;
         data.command_pools.push(command_pool);
     }
-
-    Ok(())
-}
-
-//================================================
-// Buffers
-//================================================
-
-/// Interleaved-buffer is a buffer that contain both the information of the index buffer and the vertex buffer
-/// First the vertex buffer then the index one.
-unsafe fn create_interleaved_buffer(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()>
-{
-    let vertex_size = (size_of::<Vertex>() * data.vertices.len()) as u64;
-    let index_size = (size_of::<u32>() * data.indices.len()) as u64;
-    let size = vertex_size + index_size;
-
-    let (staging_buffer, staging_buffer_memory) = create_buffer(
-        instance,
-        device,
-        data.physical_device,
-        size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
-    )?;
-
-    // Copy (staging)
-    let memory = device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8;
-    memcpy(data.vertices.as_ptr() as *const u8, memory, vertex_size as usize);
-    memcpy(data.indices.as_ptr() as *const u8, memory.add(vertex_size as usize), index_size as usize);
-    device.unmap_memory(staging_buffer_memory);
-
-    // bytes size alignment
-    let alignment = size_of::<u32>() as u64;
-    let aligned_vertex_size = (vertex_size + alignment - 1) & !(alignment - 1);
-    let size = aligned_vertex_size + index_size;
-
-    // Create (interleaved buffer)
-    let (interleaved_buffer, interleaved_buffer_memory) = create_buffer(
-        instance,
-        device,
-        data.physical_device,
-        size,
-        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL
-    )?;
-
-    data.interleaved_buffer = interleaved_buffer;
-    data.interleaved_buffer_memory = interleaved_buffer_memory;
-    data.index_offset = aligned_vertex_size;
-
-    // Copy
-    copy_buffers(
-        device,
-        staging_buffer,
-        interleaved_buffer,
-        data.setup_command_buffer,
-        &[vertex_size, index_size],
-        &[0, aligned_vertex_size],
-        data.graphics_queue,
-    )?;
-
-    // Cleanup
-    device.destroy_buffer(staging_buffer, None);
-    device.free_memory(staging_buffer_memory, None);
 
     Ok(())
 }
