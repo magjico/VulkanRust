@@ -10,6 +10,7 @@ pub use image::create_image_view;
 pub use buffer::create_buffer;
 pub use buffer::copy_buffers;
 pub use buffer::destroy_buffers;
+pub use buffer::create_framebuffers;
 pub use buffer::create_interleaved_buffer;
 pub use buffer::create_uniform_buffers;
 pub use buffer::recreate_uniform_buffers;

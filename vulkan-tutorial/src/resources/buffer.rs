@@ -118,6 +118,38 @@ pub fn destroy_buffers(
 }
 
 //===============================================
+// FrameBuffer
+//===============================================
+
+/// Generate a framebuffer for the msaa sampling inside the swapchain.
+pub fn create_framebuffers(
+    device: &Device,
+    render_pass: vk::RenderPass,
+    swapchain_image_views: &[vk::ImageView],
+    color_view: vk::ImageView,
+    depth_view: vk::ImageView,
+    width: u32,
+    height: u32,
+) -> Result<Vec<vk::Framebuffer>> {
+    let framebuffers = swapchain_image_views
+        .iter()
+        .map(|i| {
+            let attachments = &[color_view, depth_view, *i];
+            let create_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(render_pass)
+                .attachments(attachments)
+                .width(width)
+                .height(height)
+                .layers(1);
+
+            unsafe { device.create_framebuffer(&create_info, None) }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(framebuffers)
+}
+
+//===============================================
 // Interleaved Buffer (Vertex and Index Buffers)
 //===============================================
 
