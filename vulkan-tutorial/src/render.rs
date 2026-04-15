@@ -16,4 +16,6 @@ pub use texture::generate_mipmaps;
 
 pub use uniform::UniformBufferObject;
 
+pub use swapchain::create_swapchain;
+pub use swapchain::create_swapchain_image_views;
 pub use swapchain::SwapchainSupport;
