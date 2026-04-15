@@ -13,8 +13,9 @@ pub use buffer::destroy_buffers;
 pub use buffer::create_interleaved_buffer;
 pub use buffer::create_uniform_buffers;
 pub use buffer::recreate_uniform_buffers;
-// pub use buffer::create_command_buffers;
 
+pub use command::create_command_pool;
+pub use command::create_command_pools;
 pub use command::create_command_buffers;
 pub use command::create_setup_command_buffer;
 pub use command::begin_setup_command_buffer;

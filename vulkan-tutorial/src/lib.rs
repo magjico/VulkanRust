@@ -6,3 +6,4 @@ pub mod assets;
 pub mod geometry;
 pub mod math;
 pub mod setup;
+pub mod debug;

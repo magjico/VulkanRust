@@ -8,9 +8,7 @@
 )]
 
 use std::collections::HashSet;
-use std::ffi::CStr;
 use std::mem::size_of;
-use std::os::raw::c_void;
 use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 
@@ -44,6 +42,7 @@ use graphic_env::math::*;
 use graphic_env::geometry::Vertex;
 use graphic_env::gpu::*;
 use graphic_env::setup::*;
+use graphic_env::debug::debug_callback;
 
 /// Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -164,6 +163,11 @@ impl App {
             false
         )?;
         data.msaa_samples = get_max_msaa_samples(&instance, data.physical_device);
+        data.queue_family_indices = QueueFamilyIndices::create(
+            &instance,
+            data.physical_device,
+            data.surface
+        )?;
 
         let device = create_logical_device(&entry, &instance, &mut data)?;
         create_swapchain(window, &instance, &device, &mut data)?;
@@ -171,7 +175,12 @@ impl App {
         create_render_pass(&instance, &device, &mut data)?;
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
-        create_command_pools(&instance, &device, &mut data)?;
+        data.command_pool = create_command_pool(&device, &mut data.queue_family_indices)?;
+        data.command_pools = create_command_pools(
+            &device,
+            &mut data.queue_family_indices,
+            data.swapchain_images.len(),
+        )?;
 		(data.color_image, data.color_image_memory, data.color_image_view) = create_color_objects(
             &instance,
             &device,
@@ -595,6 +604,8 @@ struct AppData {
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
 	msaa_samples: vk::SampleCountFlags,
+    // QueueFamily
+    queue_family_indices: QueueFamilyIndices,
     // Swapchain
     swapchain_format: vk::Format,
     swapchain_extent: vk::Extent2D,
@@ -733,39 +744,17 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     Ok(instance)
 }
 
-extern "system" fn debug_callback(
-    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    type_: vk::DebugUtilsMessageTypeFlagsEXT,
-    data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _: *mut c_void,
-) -> vk::Bool32 {
-    let data = unsafe { *data };
-    let message = unsafe { CStr::from_ptr(data.message) }.to_string_lossy();
-
-    if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
-        error!("({:?}) {}", type_, message);
-    } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
-        warn!("({:?}) {}", type_, message);
-    } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
-        debug!("({:?}) {}", type_, message);
-    } else {
-        trace!("({:?}) {}", type_, message);
-    }
-
-    vk::FALSE
-}
-
 //================================================
 // Logical Device
 //================================================
 
 unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut AppData) -> Result<Device> {
     // Queue Create Infos
-    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
-
     let mut unique_indices = HashSet::new();
-    unique_indices.insert(indices.graphics);
-    unique_indices.insert(indices.present);
+    let graphics = data.queue_family_indices.get(vk::QueueFlags::GRAPHICS)?;
+    let present = data.queue_family_indices.present;
+    unique_indices.insert(graphics);
+    unique_indices.insert(present);
 
     let queue_priorities = &[1.0];
     let queue_infos = unique_indices
@@ -808,8 +797,8 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
     let device = instance.create_device(data.physical_device, &info, None)?;
 
     // Queues
-    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
-    data.present_queue = device.get_device_queue(indices.present, 0);
+    data.graphics_queue = device.get_device_queue(graphics, 0);
+    data.present_queue = device.get_device_queue(present, 0);
 
     Ok(device)
 }
@@ -820,8 +809,8 @@ unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut A
 
 unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
     // Image
-
-    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
+    let graphics = data.queue_family_indices.get(vk::QueueFlags::GRAPHICS)?;
+    let present = data.queue_family_indices.present;
     let support = SwapchainSupport::get(instance, data.surface, data.physical_device)?;
 
     let surface_format = get_swapchain_surface_format(&support.formats);
@@ -837,9 +826,9 @@ unsafe fn create_swapchain(window: &Window, instance: &Instance, device: &Device
     }
 
     let mut queue_family_indices = vec![];
-    let image_sharing_mode = if indices.graphics != indices.present {
-        queue_family_indices.push(indices.graphics);
-        queue_family_indices.push(indices.present);
+    let image_sharing_mode = if graphics != present {
+        queue_family_indices.push(graphics);
+        queue_family_indices.push(present);
         vk::SharingMode::CONCURRENT
     } else {
         vk::SharingMode::EXCLUSIVE
@@ -1193,32 +1182,6 @@ unsafe fn create_framebuffers(device: &Device, data: &mut AppData) -> Result<()>
             device.create_framebuffer(&create_info, None)
         })
         .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(())
-}
-
-//================================================
-// Command Pool
-//================================================
-
-unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut AppData) -> Result<vk::CommandPool> {
-    let indices = QueueFamilyIndices::get(instance, data.physical_device, data.surface)?;
-
-    let info = vk::CommandPoolCreateInfo::builder()
-        .queue_family_index(indices.graphics)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-
-    Ok(device.create_command_pool(&info, None)?) 
-}
-
-unsafe fn create_command_pools(instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-    data.command_pool = create_command_pool(instance, device, data)?;
-
-    let num_image = data.swapchain_images.len();
-    for _ in 0..num_image {
-        let command_pool = create_command_pool(instance, device, data)?;
-        data.command_pools.push(command_pool);
-    }
 
     Ok(())
 }

@@ -1,13 +1,43 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::gpu::SuitabilityError;
+use crate::gpu::QueueFamilyIndices;
 
 //================================================
 // Command Pool
 //================================================
 
+/// Create a command pool with the reset flags using a graphics queue.
+/// TODO: make the user decide which command pool flags he want to use.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - Describe this parameter.
+/// - `queue_family_indices` ( &mut [QueueFamilyIndices] ).
+pub fn create_command_pool(
+    device: &Device,
+    queue_family_indices: &mut QueueFamilyIndices,
+) -> Result<vk::CommandPool> {
+    let info = vk::CommandPoolCreateInfo::builder()
+        .queue_family_index(queue_family_indices.get(vk::QueueFlags::GRAPHICS)?)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+
+    Ok(unsafe { device.create_command_pool(&info, None)? }) 
+}
+
+/// Use [create_command_pool] to generate `count` command pool in a Vec.
+pub fn create_command_pools(
+    device: &Device,
+    queue_family_indices: &mut QueueFamilyIndices,
+    count: usize,
+) -> Result<Vec<vk::CommandPool>> {
+    let command_pools = (0..count)
+        .map(|_| create_command_pool(device, queue_family_indices))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(command_pools)
+}
 
 //===============================================
 // Command Buffers

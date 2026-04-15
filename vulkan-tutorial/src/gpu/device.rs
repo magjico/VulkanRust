@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use log::*;
+
 use anyhow::{Result, anyhow};
 
 use vulkanalia::prelude::v1_0::*;
@@ -203,7 +205,7 @@ pub fn get_physical_devices(
                 continue;
             }
 
-            if !QueueFamilyIndices2::test_for(
+            if !QueueFamilyIndices::test_for(
                 &instance,
                 physical_device,
                 surface,
@@ -238,6 +240,26 @@ pub fn get_physical_devices(
 }
 
 
+/// Retrieve the best physical device usable that respect optional and mandatory requirement.
+/// 
+/// ## Arguments
+/// 
+/// - `instance` ( &[Instance] ) - Vulkan instance.
+/// - `surface` ( [vk::SurfaceKHR] ) - Vulkan surface if we are doing on-screen rendering.
+/// - `mandatory_features` ( &[vk::PhysicalDeviceFeatures] ) - Features that the physical device must implement to be selected.
+/// - `optional_features` ( &[vk::PhysicalDeviceFeatures] ) - Features that is better to be implemented by the physical device but not mandatory.
+/// - `mandatory_device_extensions` ( &[vk::ExtensionName] ) - Extension that must be supported by the physical device.
+/// - `optional_device_extensions` ( &[vk::ExtensionName] ) - Extension that is better to be supported by the physical device but not mandatory.
+/// - `mandatory_queue_flags` ( [vk::QueueFlags] ) - Queue flags that must be respected by the physical devices.
+/// - `offscreen_rendering` ( bool ) - If we are doing offscreen rendering.
+/// 
+/// ## Returns
+/// 
+/// - `Result<vk::PhysicalDevice>` - The best physical device.
+/// 
+/// ## Errors
+/// 
+/// `SuitabilityError` - No physical device which meets all the requirements.
 pub fn pick_best_physical_device(
     instance: &Instance,
     surface: vk::SurfaceKHR,
@@ -263,9 +285,24 @@ pub fn pick_best_physical_device(
         return Err(anyhow!(SuitabilityError("No suitable physical device (empty list).")));
     }
 
-    Ok(scored_physical_devices.first().unwrap().0)
+    let first = scored_physical_devices.first().unwrap().0;
+
+    let properties =  unsafe { instance.get_physical_device_properties(first) };
+    info!("Selected physical device (`{}`).", properties.device_name);
+
+    Ok(first)
 }
 
+/// Get the max msaa samples supported by the physical device.
+/// 
+/// ## Arguments
+/// 
+/// - `instance` ( &[Instance] ) - Vulkan instance.
+/// - `physical_device` ( [vk::PhysicalDevice] ) - Choosen physical device.
+/// 
+/// ## Returns
+/// 
+/// - `vk::SampleCountFlags` - Flags that represent the max msaa samples supported.
 pub fn get_max_msaa_samples(
 	instance: &Instance,
 	physical_device: vk::PhysicalDevice,
@@ -292,72 +329,21 @@ pub fn get_max_msaa_samples(
 // Queue Family Indices (related to queue family memory)
 //=======================================================
 
-/// Allow you to manipulate graphical queues.
+/// This struct hold the indices of the used queue.
 /// 
 /// ## Fields
 /// 
-/// - `graphics` (`u32`) - Address of a graphical queue for rendering commands (support [vk::QueueFlags::GRAPHICS]).
-/// - `present` (`u32`) - Address of a graphical queue for displaying in the surface swapchain (support `KHR`).
-#[derive(Copy, Clone, Debug)]
+/// - `properties` ( Vec<[vk::QueueFamilyProperties]> ) - All Queue properties for a specific physical device pass in [QueueFamilyIndices::create].
+/// - `indices` ( HashMap<[vk::QueueFlags], u32> ) - Hashmap which associate a QueueFlags with a corresponding Queue Family (that implement the flags properties) index if it exist.
+/// - `present` ( u32 ) - Present queue index.
+#[derive(Clone, Debug, Default)]
 pub struct QueueFamilyIndices {
-    pub graphics: u32,
-    pub present: u32,
-}
-
-impl QueueFamilyIndices {
-    /// Generate a QueueFamilyIndices by finding the first available graphics and present queues.
-    /// 
-    /// ## Arguments
-    /// 
-    /// - `instance` ( &[Instance] ) - The Vulkan instance.
-    /// - `physical_device` ( [vk::PhysicalDevice] ) - The physical device to search queue from.
-    /// - `surface` ( [vk::SurfaceKHR] ) - The surface KHR for the present queue to be compatible with.
-    /// 
-    /// ## Returns
-    /// 
-    /// - `Result<Self>` - Describe the return value.
-    /// 
-    /// ## Errors
-    /// 
-    /// Missing a compatible graphic and/or surface queue.
-    pub fn get(
-        instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-        surface: vk::SurfaceKHR
-    ) -> Result<Self> {
-        let properties = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-        let graphics = properties
-            .iter()
-            .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|i| i as u32);
-
-        let mut present = None;
-        unsafe {
-            for (index, _) in properties.iter().enumerate() {
-                if instance.get_physical_device_surface_support_khr(physical_device, index as u32, surface)? {
-                    present = Some(index as u32);
-                    break;
-                }
-            }
-        }
-
-        if let (Some(graphics), Some(present)) = (graphics, present) {
-            Ok(Self { graphics, present })
-        } else {
-            Err(anyhow!(SuitabilityError("Missing required queue families.")))
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct QueueFamilyIndices2 {
     properties: Vec<vk::QueueFamilyProperties>,
     indices: HashMap<vk::QueueFlags, u32>,
     pub present: u32,
 }
 
-impl QueueFamilyIndices2 {
+impl QueueFamilyIndices {
     pub fn create(
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
