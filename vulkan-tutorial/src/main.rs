@@ -20,7 +20,6 @@ use cgmath::{
 };
 use log::*;
 
-use vulkanalia::Version;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::window as vk_window;
@@ -50,8 +49,6 @@ const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_L
 
 /// The required device extensions.
 const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
-/// The Vulkan SDK version that started requiring the portability subset extension for macOS.
-const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 /// The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
@@ -174,7 +171,18 @@ impl App {
             data.surface
         )?;
 
-        let device = create_logical_device(&entry, &instance, &mut data)?;
+        let (device, graphics_queue, present_queue) = create_logical_device(
+            &entry,
+            &instance,
+            data.physical_device,
+            &mut data.queue_family_indices,
+            VALIDATION_ENABLED,
+            VALIDATION_LAYER,
+            DEVICE_EXTENSIONS
+        )?;
+        data.graphics_queue = graphics_queue;
+        data.present_queue = present_queue;
+
         (data.swapchain, data.swapchain_format, data.swapchain_extent, data.swapchain_images) = create_swapchain(
             window,
             &instance,
@@ -813,63 +821,4 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     }
 
     Ok(instance)
-}
-
-//================================================
-// Logical Device
-//================================================
-
-unsafe fn create_logical_device(entry: &Entry, instance: &Instance, data: &mut AppData) -> Result<Device> {
-    // Queue Create Infos
-    let mut unique_indices = HashSet::new();
-    let graphics = data.queue_family_indices.get(vk::QueueFlags::GRAPHICS)?;
-    let present = data.queue_family_indices.present;
-    unique_indices.insert(graphics);
-    unique_indices.insert(present);
-
-    let queue_priorities = &[1.0];
-    let queue_infos = unique_indices
-        .iter()
-        .map(|i| {
-            vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(*i)
-                .queue_priorities(queue_priorities)
-        })
-        .collect::<Vec<_>>();
-
-    // Layers
-    let layers = if VALIDATION_ENABLED {
-        vec![VALIDATION_LAYER.as_ptr()]
-    } else {
-        vec![]
-    };
-
-    // Extensions
-    let mut extensions = DEVICE_EXTENSIONS.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
-
-    // Required by Vulkan SDK on macOS since 1.3.216.
-    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
-        extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
-    }
-
-    // Features
-    let features = vk::PhysicalDeviceFeatures::builder()
-        .sampler_anisotropy(true)
-		// Enable sample shading features
-		.sample_rate_shading(true);
-
-    // Create
-    let info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(&queue_infos)
-        .enabled_layer_names(&layers)
-        .enabled_extension_names(&extensions)
-        .enabled_features(&features);
-
-    let device = instance.create_device(data.physical_device, &info, None)?;
-
-    // Queues
-    data.graphics_queue = device.get_device_queue(graphics, 0);
-    data.present_queue = device.get_device_queue(present, 0);
-
-    Ok(device)
 }

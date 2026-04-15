@@ -13,6 +13,15 @@ use crate::gpu::QueueFamilyIndices;
 // Swapchain
 //========================================
 
+/// Generate a swapchain and all its related objects.
+/// 
+/// ## Returns
+/// 
+/// `Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, Vec<vk::Image>)>`:
+/// - The swapchain
+/// - The swapchain format
+/// - The swapchain extent
+/// - The swapchain images
 pub fn create_swapchain(
     window: &Window,
     instance: &Instance,

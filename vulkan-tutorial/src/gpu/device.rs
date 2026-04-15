@@ -4,8 +4,16 @@ use log::*;
 
 use anyhow::{Result, anyhow};
 
+use vulkanalia::Version;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
+
+//=======================================================
+// const
+//=======================================================
+
+/// The Vulkan SDK version that started requiring the portability subset extension for macOS.
+pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 //=======================================================
 // Physical Devices
@@ -323,6 +331,73 @@ pub fn get_max_msaa_samples(
 	.cloned()
 	.find(|c| counts.contains(*c))
 	.unwrap_or(vk::SampleCountFlags::_1)
+}
+
+//=======================================================
+// Logical Device
+//=======================================================
+
+pub fn create_logical_device(
+    entry: &Entry,
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+    queue_family_indices: &mut QueueFamilyIndices,
+    is_validation_enable: bool,
+    validation_layer: vk::ExtensionName,
+    device_extensions: &[vk::ExtensionName]
+) -> Result<(Device, vk::Queue, vk::Queue)> {
+    // Queue Create Infos
+    let mut unique_indices = HashSet::new();
+    let graphics = queue_family_indices.get(vk::QueueFlags::GRAPHICS)?;
+    let present = queue_family_indices.present;
+    unique_indices.insert(graphics);
+    unique_indices.insert(present);
+
+    let queue_priorities = &[1.0];
+    let queue_infos = unique_indices
+        .iter()
+        .map(|i| {
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(*i)
+                .queue_priorities(queue_priorities)
+        })
+        .collect::<Vec<_>>();
+
+    // Layers
+    let layers = if is_validation_enable {
+        vec![validation_layer.as_ptr()]
+    } else {
+        vec![]
+    };
+
+    // Extensions
+    let mut extensions = device_extensions.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
+
+    // Required by Vulkan SDK on macOS since 1.3.216.
+    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
+        extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
+    }
+
+    // Features
+    let features = vk::PhysicalDeviceFeatures::builder()
+        .sampler_anisotropy(true)
+		// Enable sample shading features
+		.sample_rate_shading(true);
+
+    // Create
+    let info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(&queue_infos)
+        .enabled_layer_names(&layers)
+        .enabled_extension_names(&extensions)
+        .enabled_features(&features);
+
+    let device = unsafe { instance.create_device(physical_device, &info, None)? };
+
+    // Queues
+    let graphics_queue = unsafe { device.get_device_queue(graphics, 0) };
+    let present_queue = unsafe { device.get_device_queue(present, 0) };
+
+    Ok((device, graphics_queue, present_queue))
 }
 
 //=======================================================
