@@ -83,7 +83,6 @@ pub fn create_render_pass(
         );
 
     // Create
-
     let attachments = &[color_attachment, depth_stencil_attachment, color_resolve_attachment];
     let subpasses = &[subpass];
     let dependencies = &[dependency];

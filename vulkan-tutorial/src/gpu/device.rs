@@ -4,16 +4,10 @@ use log::*;
 
 use anyhow::{Result, anyhow};
 
-use vulkanalia::Version;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
 
-//=======================================================
-// const
-//=======================================================
-
-/// The Vulkan SDK version that started requiring the portability subset extension for macOS.
-pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
+use crate::constants::PORTABILITY_MACOS_VERSION;
 
 //=======================================================
 // Physical Devices
@@ -55,17 +49,9 @@ fn is_physical_device_supported(
         )
     };
 
-    if !required_feat_slice.iter().zip(available_feat_slice.iter())
+    return required_feat_slice.iter().zip(available_feat_slice.iter())
         .all(|(&req, &avail)| req == vk::FALSE || avail == vk::TRUE)
-    {
-        return false;
-    }
-
-    if !mandatory_device_extensions.iter().all(|ext| extensions.contains(ext)) {
-        return false;
-    }
-
-    true
+        && mandatory_device_extensions.iter().all(|ext| extensions.contains(ext));
 }
 
 /// Score a physical device (useful to compare physical devices between them)
