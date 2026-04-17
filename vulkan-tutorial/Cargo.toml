@@ -1,6 +1,6 @@
 [package]
-name = "vulkan-tutorial"
-version = "0.1.0"
+name = "graphic-env"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
