@@ -71,3 +71,10 @@ impl Hash for Vertex {
         self.tex_coord[1].to_bits().hash(state);
     }
 }
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct Mesh {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+}

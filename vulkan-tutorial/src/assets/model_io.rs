@@ -5,7 +5,7 @@ use std::fs::File;
 use anyhow::Result;
 use cgmath::{vec2, vec3};
 
-use crate::geometry::Vertex;
+use crate::geometry::{Vertex, Mesh};
 
 /// Load a .obj 3D model and return its vertices and the associated indexes.
 /// 
@@ -16,7 +16,7 @@ use crate::geometry::Vertex;
 /// # Returns
 /// 
 /// - `Result<(Vec<Vertex>, Vec<u32>)>` - vertices and indices.
-pub fn load_obj_model(path: &str) -> Result<(Vec<Vertex>, Vec<u32>)> {
+pub fn load_obj_model(path: &str) -> Result<Mesh> {
     // Model
     let mut reader = BufReader::new(File::open(path)?);
 
@@ -63,5 +63,5 @@ pub fn load_obj_model(path: &str) -> Result<(Vec<Vertex>, Vec<u32>)> {
         }
     }
 
-    Ok((vertices, indices))
+    Ok(Mesh {vertices, indices})
 }

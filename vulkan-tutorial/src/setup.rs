@@ -1,9 +1,14 @@
 /// Setup multiple **specific** app objects
+use rand::RngExt;
+use crate::math::*;
+
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
 use crate::render::UniformBufferObject;
+use crate::scene::{Model, ModelInstance};
+use crate::constants::*;
 
 //===============================================
 // Descriptors
@@ -162,4 +167,54 @@ pub fn create_sync_objects(
         in_flight_fences,
         images_in_flight
     ))
+}
+
+//===============================================
+// models
+//===============================================
+
+/// Setup 10 instances objects for instance rendering tests
+pub fn setup_object_instances() -> Result<Vec<ModelInstance>> {
+    let mut rng = rand::rng();
+
+    let n = 10;
+    let x_min = -2_f32;
+    let x_max =  2_f32;
+    let y_min = -2_f32;
+    let y_max =  2_f32;
+
+    let nx = (n as f32).sqrt().ceil() as i32;
+    let ny = (n as f32 / nx as f32).ceil() as i32;
+    let step_x = if nx > 1 { (x_max - x_min) / (nx - 1) as f32 } else { 0.0 };
+    let step_y = if ny > 1 { (y_max - y_min) / (ny - 1) as f32 } else { 0.0 };
+
+    let object_instances: Vec<ModelInstance> = (0..n)
+        .map(|i| {
+            let ix = i % nx;
+            let iy = i / nx;
+
+            let x = x_max + ix as f32 * step_x;
+            let y = y_min + iy as f32 * step_y;
+
+            ModelInstance::new(
+                Vec3::new(x, y, 0.0),
+                Vec3::new(0.0,0.0, rng.random_range(-180.0..180.0)),
+                Vec3::new(rng.random_range(0.5..1.2), rng.random_range(0.5..1.2), rng.random_range(0.5..1.2))
+            )
+        })
+        .collect();
+
+    Ok(object_instances)
+}
+
+/// load a lot of models and setup their instances for testing purposes.
+pub fn load_models() -> Result<Vec<Model>> {
+    let mut models = Vec::new();
+
+    let mut model = Model::create_with_obj(MESH_PATH)?;
+    model.add_instances(&setup_object_instances()?);
+
+    models.push(model);
+
+    Ok(models)
 }

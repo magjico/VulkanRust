@@ -11,8 +11,7 @@ use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
                     ExtDebugUtilsExtensionInstanceCommands};
 
-use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, FRAG, MAX_FRAMES_IN_FLIGHT, MESH_PATH, TEXTURE_PATH, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
-use crate::assets::load_obj_model;
+use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, FRAG, MAX_FRAMES_IN_FLIGHT, TEXTURE_PATH, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
 use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
                     get_max_msaa_samples, create_logical_device, create_render_pass,
                     create_descriptor_set_layout, create_pipeline};
@@ -22,8 +21,8 @@ use crate::render::{UniformBufferObject, create_swapchain, create_swapchain_imag
 use crate::resources::{create_command_pool, create_command_pools, create_framebuffers,
                         create_setup_command_buffer, create_interleaved_buffer, create_uniform_buffers,
                         create_command_buffers, destroy_buffers};
-use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects};
-use crate::geometry::Vertex;
+use crate::scene::Model;
+use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects, load_models};
 use crate::math::Mat4;
 
 //===================================================
@@ -176,16 +175,15 @@ impl App {
         )?;
 
         // 10. model
-        let (vertices, indices) = load_obj_model(MESH_PATH)?;
-        let models_data = ModelsData::create(vertices, indices); 
+        let models = load_models()?;
+        let models_data = ModelsData::create(models); 
 
         // 11. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
             physical_device,
-            &models_data.vertices,
-            &models_data.indices,
+            &models_data,
             command_data.setup_command_buffer,
             graphics_queue,
             swapchain_data.swapchain_images.len(),
@@ -398,15 +396,13 @@ impl App {
         self.data.command_data.update_command_buffer(
             &self.device,
             &self.data.framebuffers,
-            &self.data.models_data.indices,
+            &self.data.models_data,
             &self.data.pipeline_data,
             &self.data.buffers_data,
             &self.data.descriptor_data.descriptor_sets,
             self.data.swapchain_data.swapchain_extent,
             self.data.pipeline_data.render_pass,
             image_index,
-            self.models,
-            self.start,
         )?;
 
         // Update UBO
@@ -452,16 +448,16 @@ impl App {
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         let view = Mat4::look_at_rh(
-            point3(6.0, 0.0, 2.0),
+            point3(0.0, 0.0, 5.0),
             point3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 1.0)
+            vec3(0.0, 1.0, 0.0)
         );
 
         let proj = CORRECTION * cgmath::perspective(
-            Deg(45.0),
+            Deg(90.0),
             self.data.swapchain_data.swapchain_extent.width as f32 / self.data.swapchain_data.swapchain_extent.height as f32,
             0.1,
-            10.0
+            20.0
         );
 
         let ubo = UniformBufferObject { view, proj };
@@ -654,18 +650,16 @@ impl PipelineData {
 
 #[derive(Clone, Debug)]
 pub struct ModelsData {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+    // TODO: change this later for a models organisation architectures
+    pub models: Vec<Model>
 }
 
 impl ModelsData {
     pub fn create(
-        vertices: Vec<Vertex>,
-        indices: Vec<u32>,
+        models: Vec<Model>,
     ) -> Self {
         Self {
-            vertices,
-            indices,
+            models,
         }
     }
 }
@@ -684,18 +678,20 @@ impl BuffersData {
         instance: &Instance,
         device: &Device,
         physical_device: vk::PhysicalDevice,
-        vertices: &[Vertex],
-        indices: &[u32],
+        models_data: &ModelsData,
         setup_command_buffer: vk::CommandBuffer,
         graphics_queue: vk::Queue,
         images_count: usize,
     ) -> Result<Self> {
+        // TODO: change this later to support multiple models
+        let model = &models_data.models[0];
+
         let (interleaved_buffer, interleaved_buffer_memory, index_offset) = create_interleaved_buffer(
             instance,
             device,
             physical_device,
-            vertices,
-            indices,
+            &model.mesh.vertices,
+            &model.mesh.indices,
             setup_command_buffer,
             graphics_queue,
         )?;
@@ -794,15 +790,13 @@ impl CommandData {
         &mut self,
         device: &Device,
         framebuffers: &[vk::Framebuffer],
-        indices: &[u32],
+        models_data: &ModelsData,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         descriptor_sets: &[vk::DescriptorSet],
         swapchain_extent: vk::Extent2D,
         render_pass: vk::RenderPass,
         image_index: usize,
-        models: usize,
-        start_time: Instant,
     ) -> Result<()> {
         // Pool
         let command_pool = self.command_pools[image_index];
@@ -842,17 +836,19 @@ impl CommandData {
 
         unsafe { device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS) };
 
-        let secondary_command_buffers = (0..models)
+        // TODO: change this to support multiple models*
+        let model_data = &models_data.models[0];
+
+        let secondary_command_buffers = (0..model_data.instances.len())
             .map(|i| self.update_secondary_command_buffers(
                 device,
                 framebuffers,
-                indices,
+                model_data,
                 pipeline_data,
                 buffers_data,
                 descriptor_sets,
                 image_index,
                 i,
-                start_time,
             ))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -869,13 +865,12 @@ impl CommandData {
         &mut self,
         device: &Device,
         framebuffers: &[vk::Framebuffer],
-        indices: &[u32],
+        model_data: &Model,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         descriptor_sets: &[vk::DescriptorSet],
         image_index: usize,
         model_index: usize,
-        start_time: Instant,
     ) -> Result<vk::CommandBuffer> {
         self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
@@ -893,13 +888,7 @@ impl CommandData {
         let command_buffer = command_buffers[model_index];
 
         // push-constant model matrix
-        let y = (((model_index % 2) as f32) * 2.5) - 1.25;
-        let z = (((model_index / 2) as f32) * -2.0) + 1.0;
-
-        let time = start_time.elapsed().as_secs_f32(); // to make the model rotate
-
-        let model = Mat4::from_translation(vec3(0.0, y, z)) 
-            * Mat4::from_axis_angle(vec3(0.0, 0.0 ,1.0), Deg(90.0) * time);
+        let model = model_data.instances[model_index].to_model_matrix();
 
         let model_bytes = unsafe {
             std::slice::from_raw_parts(
@@ -908,7 +897,7 @@ impl CommandData {
             )
         };
 
-        let opacity = (model_index + 1) as f32 * 0.25;
+        let opacity: f32 = 1.0;
         let opacity_bytes = &opacity.to_ne_bytes()[..];
 
         let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
@@ -951,7 +940,7 @@ impl CommandData {
                 opacity_bytes,
             );
 
-            device.cmd_draw_indexed(command_buffer, indices.len() as u32, 1, 0, 0, 0);
+            device.cmd_draw_indexed(command_buffer, model_data.mesh.indices.len() as u32, 1, 0, 0, 0);
             device.end_command_buffer(command_buffer)?;
         }
 
