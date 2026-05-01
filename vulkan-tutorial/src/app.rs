@@ -8,19 +8,18 @@ use winit::window::Window;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::{KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
-                    ExtDebugUtilsExtensionInstanceCommands};
+use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
 
 use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, FRAG, MAX_FRAMES_IN_FLIGHT, TEXTURE_PATH, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
 use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
-                    get_max_msaa_samples, create_logical_device, create_render_pass,
-                    create_descriptor_set_layout, create_pipeline};
+                    get_max_msaa_samples, create_logical_device, create_descriptor_set_layout,
+                    create_pipeline};
 use crate::render::{UniformBufferObject, create_swapchain, create_swapchain_image_views,
                     create_color_objects, create_depth_objects, create_texture_image,
                     create_texture_image_view, create_texture_sampler};
-use crate::resources::{create_command_pool, create_command_pools, create_framebuffers,
-                        create_setup_command_buffer, create_interleaved_buffer, create_uniform_buffers,
-                        create_command_buffers, destroy_buffers};
+use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
+                        create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
+                        destroy_buffers};
 use crate::scene::Model;
 use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects, load_models};
 use crate::math::Mat4;
@@ -109,30 +108,14 @@ impl App {
             &mut device_data.queue_family_indices
         )?;
 
-        // 4. pipeline
-        let descriptor_set_layout = create_descriptor_set_layout(&device)?;
-
-        let pipeline_data = PipelineData::create(
-            &instance,
-            &device,
-            physical_device,
-            swapchain_data.swapchain_format,
-            swapchain_data.swapchain_extent,
-            descriptor_set_layout,
-            msaa_samples,
-            VERT,
-            FRAG
-        )?;
-
-
-        // 5. command
+        // 4. command
         let command_data = CommandData::create(
             &device,
             &mut device_data.queue_family_indices,
             &swapchain_data.swapchain_images
         )?;
 
-        // 6. color
+        // 5. color
         let color_data = ColorData::create(
             &instance,
             &device,
@@ -143,7 +126,7 @@ impl App {
             swapchain_data.swapchain_format
         )?;
 
-        // 7. depth
+        // 6. depth
         let depth_data = DepthData::create(
             &instance,
             &device,
@@ -153,18 +136,21 @@ impl App {
             msaa_samples,
         )?;
 
-        // 8. framebuffers
-        let framebuffers = create_framebuffers(
+        // 7. pipeline
+        let descriptor_set_layout = create_descriptor_set_layout(&device)?;
+
+        let pipeline_data = PipelineData::create(
             &device,
-            pipeline_data.render_pass,
-            &swapchain_data.swapchain_image_views,
-            color_data.color_image_view,
-            depth_data.depth_image_view,
-            swapchain_data.swapchain_extent.width,
-            swapchain_data.swapchain_extent.height,
+            swapchain_data.swapchain_format,
+            swapchain_data.swapchain_extent,
+            depth_data.depth_format,
+            descriptor_set_layout,
+            msaa_samples,
+            VERT,
+            FRAG
         )?;
         
-        // 9. texture
+        // 8. texture
         let texture_data = TextureData::create(
             &instance,
             &device,
@@ -174,11 +160,11 @@ impl App {
             TEXTURE_PATH
         )?;
 
-        // 10. model
+        // 9. model
         let models = load_models()?;
         let models_data = ModelsData::create(models); 
 
-        // 11. buffers
+        // 10. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
@@ -189,7 +175,7 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
 
-        // 12. descriptor
+        // 11. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
             descriptor_set_layout,
@@ -199,7 +185,7 @@ impl App {
             swapchain_data.swapchain_images.len()
         )?;
         
-        // 13. sync
+        // 12. sync
         let sync_data = SyncData::create(
             &device,
             MAX_FRAMES_IN_FLIGHT,
@@ -212,7 +198,6 @@ impl App {
             swapchain_data,
             descriptor_set_layout,
             pipeline_data,
-            framebuffers,
             models_data,
             buffers_data,
             descriptor_data,
@@ -274,7 +259,6 @@ impl App {
 
         self.data.depth_data.destroy(&self.device);
 		self.data.color_data.destroy(&self.device);
-        self.data.framebuffers.iter().for_each(|f| self.device.destroy_framebuffer(*f, None));
         self.data.pipeline_data.destroy(&self.device);
         self.data.swapchain_data.destroy(&self.device);
     }
@@ -297,11 +281,10 @@ impl App {
         )?;
 
         self.data.pipeline_data = PipelineData::create(
-            &self.instance,
             &self.device,
-            self.data.device_data.physical_device,
             self.data.swapchain_data.swapchain_format,
             self.data.swapchain_data.swapchain_extent,
+            self.data.depth_data.depth_format,
             self.data.descriptor_set_layout,
             self.data.device_data.msaa_samples,
             VERT,
@@ -325,16 +308,6 @@ impl App {
             self.data.swapchain_data.swapchain_extent.width,
             self.data.swapchain_data.swapchain_extent.height,
             self.data.device_data.msaa_samples,
-        )?;
-
-        self.data.framebuffers = create_framebuffers(
-            &self.device,
-            self.data.pipeline_data.render_pass,
-            &self.data.swapchain_data.swapchain_image_views,
-            self.data.color_data.color_image_view,
-            self.data.depth_data.depth_image_view,
-            self.data.swapchain_data.swapchain_extent.width,
-            self.data.swapchain_data.swapchain_extent.height,
         )?;
 
         (self.data.buffers_data.uniform_buffers, self.data.buffers_data.uniform_buffers_memory) = create_uniform_buffers(
@@ -395,13 +368,14 @@ impl App {
         // Update commands buffers
         self.data.command_data.update_command_buffer(
             &self.device,
-            &self.data.framebuffers,
             &self.data.models_data,
             &self.data.pipeline_data,
             &self.data.buffers_data,
+            &self.data.swapchain_data,
+            &self.data.color_data,
+            &self.data.depth_data,
             &self.data.descriptor_data.descriptor_sets,
-            self.data.swapchain_data.swapchain_extent,
-            self.data.pipeline_data.render_pass,
+            self.data.device_data.msaa_samples,
             image_index,
         )?;
 
@@ -495,8 +469,6 @@ pub struct AppData {
     // Pipeline
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub pipeline_data: PipelineData,
-    // Framebuffers
-    pub framebuffers: Vec<vk::Framebuffer>,
     // Models
     pub models_data: ModelsData,
     // Buffers
@@ -597,44 +569,33 @@ impl SwapchainData {
 
 #[derive(Clone, Debug)]
 pub struct PipelineData {
-    pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 }
 
 impl PipelineData {
     pub fn create(
-        instance: &Instance,
         device: &Device,
-        physical_device: vk::PhysicalDevice,
         swapchain_format: vk::Format,
         swapchain_extent: vk::Extent2D,
+        depth_format: vk::Format,
         descriptor_set_layout: vk::DescriptorSetLayout,
         msaa_samples: vk::SampleCountFlags,
         vert: &[u8],
         frag: &[u8],
     ) -> Result<Self> {
-        let render_pass = create_render_pass(
-            instance,
-            device,
-            physical_device,
-            swapchain_format,
-            msaa_samples
-        )?;
-
-        
         let (pipeline, pipeline_layout) = create_pipeline(
             &device,
             vert,
             frag,
-            render_pass,
             swapchain_extent,
+            swapchain_format,
+            depth_format,
             msaa_samples,
             descriptor_set_layout
         )?;
 
         Ok(Self {
-            render_pass,
             pipeline_layout,
             pipeline
         })
@@ -644,7 +605,6 @@ impl PipelineData {
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
-        device.destroy_render_pass(self.render_pass, None);
     }
 }
 
@@ -789,13 +749,14 @@ impl CommandData {
     pub fn update_command_buffer(
         &mut self,
         device: &Device,
-        framebuffers: &[vk::Framebuffer],
         models_data: &ModelsData,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
+        swapchain_data: &SwapchainData,
+        color_data: &ColorData,
+        depth_data: &DepthData,
         descriptor_sets: &[vk::DescriptorSet],
-        swapchain_extent: vk::Extent2D,
-        render_pass: vk::RenderPass,
+        msaa_samples: vk::SampleCountFlags,
         image_index: usize,
     ) -> Result<()> {
         // Pool
@@ -810,10 +771,6 @@ impl CommandData {
 
         unsafe { device.begin_command_buffer(command_buffer, &info)? };
 
-        let render_area = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(swapchain_extent);
-
         let color_clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
@@ -827,26 +784,55 @@ impl CommandData {
             },
         };
 
-        let clear_values = &[color_clear_value, depth_clear_value];
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(render_pass)
-            .framebuffer(framebuffers[image_index])
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(swapchain_data.swapchain_extent);
+
+        let color_attachment = vk::RenderingAttachmentInfo::builder()
+            .image_view(color_data.color_image_view)
+            .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(swapchain_data.swapchain_image_views[image_index])
+            .resolve_image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .clear_value(color_clear_value);
+
+        let depth_attachment = vk::RenderingAttachmentInfo::builder()
+            .image_view(depth_data.depth_image_view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(depth_clear_value);
+
+        let rendering_info = vk::RenderingInfo::builder()
+            .flags(vk::RenderingFlagsKHR::CONTENTS_SECONDARY_COMMAND_BUFFERS)
             .render_area(render_area)
-            .clear_values(clear_values);
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment))
+            .depth_attachment(&depth_attachment);
 
-        unsafe { device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS) };
+        Self::transition_for_render(
+            device,
+            swapchain_data.swapchain_images[image_index],
+            command_buffer
+        );
 
-        // TODO: change this to support multiple models*
+        unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
+
+        // TODO: change this to support multiple models
         let model_data = &models_data.models[0];
 
         let secondary_command_buffers = (0..model_data.instances.len())
             .map(|i| self.update_secondary_command_buffers(
                 device,
-                framebuffers,
                 model_data,
                 pipeline_data,
                 buffers_data,
+                &[swapchain_data.swapchain_format],
+                depth_data,
                 descriptor_sets,
+                msaa_samples,
                 image_index,
                 i,
             ))
@@ -854,9 +840,16 @@ impl CommandData {
 
         unsafe { 
             device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
-            device.cmd_end_render_pass(command_buffer);
-            device.end_command_buffer(command_buffer)?;
+            device.cmd_end_rendering_khr(command_buffer);
         };
+
+        Self::transition_for_present(
+            device,
+            swapchain_data.swapchain_images[image_index],
+            command_buffer
+        );
+
+        unsafe { device.end_command_buffer(command_buffer)? };
 
         Ok(())
     }
@@ -864,11 +857,13 @@ impl CommandData {
     pub fn update_secondary_command_buffers(
         &mut self,
         device: &Device,
-        framebuffers: &[vk::Framebuffer],
         model_data: &Model,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
+        swapchain_formats: &[vk::Format],
+        depth_data: &DepthData,
         descriptor_sets: &[vk::DescriptorSet],
+        msaa_samples: vk::SampleCountFlags,
         image_index: usize,
         model_index: usize,
     ) -> Result<vk::CommandBuffer> {
@@ -900,10 +895,13 @@ impl CommandData {
         let opacity: f32 = 1.0;
         let opacity_bytes = &opacity.to_ne_bytes()[..];
 
+        let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
+            .color_attachment_formats(swapchain_formats)
+            .depth_attachment_format(depth_data.depth_format)
+            .rasterization_samples(msaa_samples);
+
         let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
-            .render_pass(pipeline_data.render_pass)
-            .subpass(0)
-            .framebuffer(framebuffers[image_index]);
+            .push_next(&mut inheritance_rendering_info);
 
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
@@ -945,6 +943,64 @@ impl CommandData {
         }
 
         Ok(command_buffer)
+    }
+
+    fn transition_for_render(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags2::empty())
+            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // TODO: if blending then need to access READ aswell.
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
+    }
+
+    fn transition_for_present(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::empty())
+            .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+        
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
     }
 }
 
@@ -1037,6 +1093,7 @@ pub struct DepthData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub depth_format: vk::Format,
 }
 
 impl DepthData {
@@ -1048,7 +1105,7 @@ impl DepthData {
         extent_height: u32,
         samples_count: vk::SampleCountFlags, 
     )-> Result<Self> {
-        let (depth_image, depth_image_memory, depth_image_view) = create_depth_objects(
+        let (depth_image, depth_image_memory, depth_image_view, depth_format) = create_depth_objects(
             &instance,
             &device,
             physical_device,
@@ -1060,7 +1117,8 @@ impl DepthData {
         Ok(Self {
             depth_image,
             depth_image_memory,
-            depth_image_view
+            depth_image_view,
+            depth_format
         })
     }
 

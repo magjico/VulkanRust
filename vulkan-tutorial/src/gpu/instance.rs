@@ -20,7 +20,7 @@ pub fn create_instance(window: &Window, entry: &Entry) -> Result<(Instance, Opti
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(ENGINE_NAME)
         .engine_version(vk::make_version(1, 0, 0))
-        .api_version(vk::make_version(1, 0, 0));
+        .api_version(vk::make_version(1, 2, 0));
 
     // Layers
     let available_layers = unsafe { entry

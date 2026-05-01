@@ -26,7 +26,7 @@ pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// Engine name
 pub const ENGINE_NAME: &[u8] = b"No Engine\0";
 /// Application Name
-pub const APP_NAME: &[u8] = b"Vulkan Tutorial (Rust)\0";
+pub const APP_NAME: &[u8] = b"Vulkan (Rust)\0";
 
 //==================================
 // Params Consts
@@ -38,7 +38,8 @@ pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 /// The name of the validation layers.
 pub const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 /// The required device extensions.
-pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
+pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name,
+    vk::KHR_SYNCHRONIZATION2_EXTENSION.name, vk::KHR_DYNAMIC_RENDERING_EXTENSION.name];
 /// The maximum number of frames that can be processed concurrently.
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 /// The texture test path

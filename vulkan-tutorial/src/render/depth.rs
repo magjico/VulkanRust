@@ -4,10 +4,11 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::resources::{get_supported_format, create_image, create_image_view};
 
-/// Create 3 depths objects:
+/// Create 4 depths objects:
 /// - Depth image
 /// - Depth image memory to link it to the swapchain
 /// - Depth image view, the image view.
+/// - The depth format.
 /// 
 /// ## Arguments
 /// 
@@ -20,7 +21,7 @@ use crate::resources::{get_supported_format, create_image, create_image_view};
 /// 
 /// ## Returns
 /// 
-/// - `Result<(vk::Image, vk::DeviceMemory, vk::ImageView)>`.
+/// - `Result<(vk::Image, vk::DeviceMemory, vk::ImageView, vk::Format)>`.
 pub fn create_depth_objects(
     instance: &Instance,
     device: &Device,
@@ -28,7 +29,7 @@ pub fn create_depth_objects(
     width: u32,
     height: u32,
     samples_count: vk::SampleCountFlags,
-) -> Result<(vk::Image, vk::DeviceMemory, vk::ImageView)> {
+) -> Result<(vk::Image, vk::DeviceMemory, vk::ImageView, vk::Format)> {
     let format = get_depth_format(instance, physical_device)?;
 
     let (depth_image, depth_image_memory) = create_image(
@@ -49,7 +50,7 @@ pub fn create_depth_objects(
     let depth_image_memory = depth_image_memory;
     let depth_image_view = create_image_view(device, depth_image, format, vk::ImageAspectFlags::DEPTH, 1)?;
 
-    Ok((depth_image, depth_image_memory, depth_image_view))
+    Ok((depth_image, depth_image_memory, depth_image_view, format))
 }
 
 pub fn get_depth_format(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<vk::Format> {

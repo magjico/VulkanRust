@@ -47,8 +47,9 @@ pub fn create_pipeline(
     device: &Device,
     vert: &[u8],
     frag: &[u8],
-    render_pass: vk::RenderPass,
     swapchain_extent: vk::Extent2D,
+    swapchain_format: vk::Format,
+    depth_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
     descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
@@ -129,8 +130,8 @@ pub fn create_pipeline(
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)
-        .src_alpha_blend_factor(vk::BlendFactor::ONE)
-        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+        .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .alpha_blend_op(vk::BlendOp::ADD);
 
     let attachments = &[attachment];
@@ -160,6 +161,13 @@ pub fn create_pipeline(
 
     let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
 
+    // dynamic rendering
+    let color_formats = &[swapchain_format];
+
+    let mut pipeline_rendering_info = vk::PipelineRenderingCreateInfoKHR::builder()
+        .color_attachment_formats(color_formats)
+        .depth_attachment_format(depth_format);
+
     // Create
     let stages = &[vert_stage, frag_stage];
     let info = vk::GraphicsPipelineCreateInfo::builder()
@@ -172,8 +180,7 @@ pub fn create_pipeline(
         .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         .layout(pipeline_layout)
-        .render_pass(render_pass)
-        .subpass(0);
+        .push_next(&mut pipeline_rendering_info);
 
     let pipeline = unsafe { device
         .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?

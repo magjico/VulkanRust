@@ -122,6 +122,7 @@ pub fn destroy_buffers(
 //===============================================
 
 /// Generate a framebuffer for the msaa sampling inside the swapchain.
+/// useless in dynamic rendering.
 pub fn create_framebuffers(
     device: &Device,
     render_pass: vk::RenderPass,
