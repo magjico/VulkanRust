@@ -3,7 +3,7 @@ use anyhow::Result;
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
 
-use crate::geometry::Vertex;
+use crate::scene::Vertex;
 
 //===========================================
 // Descriptor Set

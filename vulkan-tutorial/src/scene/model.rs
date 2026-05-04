@@ -4,7 +4,7 @@ use cgmath::{Vector3, Rad, Matrix4};
 
 use crate::math::*;
 use crate::assets::load_obj_model;
-use crate::geometry::{Vertex, Mesh};
+use crate::scene::{Vertex, Mesh};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -31,7 +31,6 @@ impl ModelInstance {
         Self { position, rotation, scale }
     }
 
-
     pub fn to_model_matrix(&self) -> Mat4 {
         let translation = Matrix4::from_translation(self.position);
         let rotation = Matrix4::from_angle_x(self.rotation.x)
@@ -57,7 +56,7 @@ pub struct Model {
 impl Model {
     pub fn create(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
         Self {
-            mesh: Mesh { vertices, indices },
+            mesh: Mesh { vertices, indices, material_index: -1 },
             instances: Vec::new()
         }
     }

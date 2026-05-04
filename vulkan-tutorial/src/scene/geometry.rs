@@ -8,13 +8,14 @@ use crate::math::*;
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
     pub pos: Vec3,
+    pub normal: Vec3,
     pub color: Vec3,
     pub tex_coord: Vec2,
 }
 
 impl Vertex {
-    pub const fn new(pos: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
-        Self { pos, color, tex_coord }
+    pub const fn new(pos: Vec3, normal: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
+        Self { pos, normal, color, tex_coord }
     }
 
     pub fn binding_description() -> vk::VertexInputBindingDescription {
@@ -25,33 +26,40 @@ impl Vertex {
             .build()
     }
 
-    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
+    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 4] {
         let pos = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(0)
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(0)
             .build();
-        let color = vk::VertexInputAttributeDescription::builder()
+        let normal = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(size_of::<Vec3>() as u32)
             .build();
-        let tex_coord = vk::VertexInputAttributeDescription::builder()
+        let color = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(2)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset((size_of::<Vec3>() * 2) as u32)
+            .build();
+        let tex_coord = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(3)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset((size_of::<Vec3>() + size_of::<Vec3>()) as u32)
+            .offset((size_of::<Vec3>() * 3) as u32)
             .build();
 
-        [pos, color, tex_coord]
+        [pos, normal, color, tex_coord]
     }
 }
 
 impl PartialEq for Vertex {
     fn eq(&self, other: &Self) -> bool {
         self.pos == other.pos
+            && self.normal == other.normal
             && self.color == other.color
             && self.tex_coord == other.tex_coord
     }
@@ -64,6 +72,9 @@ impl Hash for Vertex {
         self.pos[0].to_bits().hash(state);
         self.pos[1].to_bits().hash(state);
         self.pos[2].to_bits().hash(state);
+        self.normal[0].to_bits().hash(state);
+        self.normal[1].to_bits().hash(state);
+        self.normal[2].to_bits().hash(state);
         self.color[0].to_bits().hash(state);
         self.color[1].to_bits().hash(state);
         self.color[2].to_bits().hash(state);
@@ -74,7 +85,41 @@ impl Hash for Vertex {
 
 #[repr(C)]
 #[derive(Clone, Debug)]
+pub struct Material {
+    pub base_color_factor: Vec4,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub emissive_factor: Vec3,
+
+    pub base_color_texture_idx: i32,
+    pub metallic_roughness_texture_idx: i32,
+    pub normal_texture_idx: i32,
+    pub occlusion_texture_idx: i32,
+    pub emissive_texture_idx: i32
+}
+
+impl Material {
+    pub const fn new() -> Self {
+        Material {
+            base_color_factor: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            metallic_factor: 1.0,
+            roughness_factor: 1.0,
+            emissive_factor: Vec3::new(1.0, 1.0, 1.0),
+
+            base_color_texture_idx: -1,
+            metallic_roughness_texture_idx: -1,
+            normal_texture_idx: -1,
+            occlusion_texture_idx: -1,
+            emissive_texture_idx: -1
+        }
+    }
+}
+
+
+#[repr(C)]
+#[derive(Clone, Debug)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub material_index: i32,
 }

@@ -5,7 +5,7 @@ use std::fs::File;
 use anyhow::Result;
 use cgmath::{vec2, vec3};
 
-use crate::geometry::{Vertex, Mesh};
+use crate::scene::{Vertex, Mesh};
 
 /// Load a .obj 3D model and return its vertices and the associated indexes.
 /// 
@@ -24,6 +24,7 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
         &mut reader,
         &tobj::LoadOptions {
             triangulate: true,
+            single_index: true,
             ..Default::default()
         },
         |_| Ok(Default::default()),
@@ -45,6 +46,15 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
                     model.mesh.positions[pos_offset + 1],
                     model.mesh.positions[pos_offset + 2],
                 ),
+                normal: if model.mesh.normals.is_empty() {
+                    vec3(0.0, 0.0, 0.0)
+                } else {
+                    vec3(
+                        model.mesh.normals[pos_offset],
+                        model.mesh.normals[pos_offset + 1],
+                        model.mesh.normals[pos_offset + 2],
+                    )
+                },
                 color: vec3(1.0, 1.0, 1.0),
                 tex_coord: vec2(
                     model.mesh.texcoords[tex_coord_offset],
@@ -63,5 +73,5 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
         }
     }
 
-    Ok(Mesh {vertices, indices})
+    Ok(Mesh {vertices, indices, material_index: -1})
 }

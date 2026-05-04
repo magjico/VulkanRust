@@ -6,7 +6,7 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::gpu::get_memory_type_index;
 use crate::render::UniformBufferObject;
-use crate::geometry::Vertex;
+use crate::scene::Vertex;
 
 use super::begin_setup_command_buffer;
 use super::flush_setup_command_buffer;
@@ -283,12 +283,12 @@ pub fn create_uniform_buffers(
 /// 
 /// # Arguments
 /// 
-/// - `instance` (`&Instance`) - Vulkan instance.
-/// - `device` (`&Device`) - Vulkan device.
-/// - `physical_device` (`vk`) - a physical device.
-/// - `uniform_buffers` (`&mut Vec<vk`) - the uniform buffers to recreates.
-/// - `uniform_buffers_memory` (`&mut Vec<vk`) - the uniform buffers memories associated.
-/// - `count` (`usize`) - the number of buffers to recreate.
+/// - `instance` ( &[Instance] ) - Vulkan instance.
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `physical_device` ( [vk::PhysicalDevice] ) - a physical device.
+/// - `uniform_buffers` ( &mut Vec<[vk::Buffer]> ) - the uniform buffers to recreates.
+/// - `uniform_buffers_memory` ( &mut Vec<[vk::DeviceMemory]> ) - the uniform buffers memories associated.
+/// - `count` (  usize ) - the number of buffers to recreate.
 pub fn recreate_uniform_buffers(
     instance: &Instance,
     device: &Device,
