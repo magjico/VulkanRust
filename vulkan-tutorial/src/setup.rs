@@ -196,7 +196,7 @@ pub fn setup_object_instances() -> Result<Vec<ModelInstance>> {
             let x = x_max + ix as f32 * step_x;
             let y = y_min + iy as f32 * step_y;
 
-            ModelInstance::new(
+            ModelInstance::from_degrees(
                 Vec3::new(x, y, 0.0),
                 Vec3::new(0.0,0.0, rng.random_range(-180.0..180.0)),
                 Vec3::new(rng.random_range(0.5..1.2), rng.random_range(0.5..1.2), rng.random_range(0.5..1.2))

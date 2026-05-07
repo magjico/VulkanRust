@@ -1,42 +1,63 @@
-use anyhow::Result;
+use std::rc::{Rc, Weak};
+use std::cell::RefCell;
 
-use cgmath::{Vector3, Rad, Matrix4};
+use anyhow::{Result, anyhow};
+
+use cgmath::{Deg, Euler, Rad, VectorSpace};
 
 use crate::math::*;
 use crate::assets::load_obj_model;
-use crate::scene::{Vertex, Mesh};
+use super::{Vertex, Mesh, Node, Animation, Material, PathType};
+
+//===============================================
+// Model-Instance 
+//===============================================
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct ModelInstance {
-    pub position: Vector3<f32>,
-    pub rotation: Vector3<Rad<f32>>,
-    pub scale: Vector3<f32>,
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
 }
 
 impl ModelInstance {
-    pub fn new(position: Vec3, rotation_deg: Vec3, scale: Vec3) -> Self {
+    pub const fn new(position: Vec3, rotation: Quat, scale: Vec3) -> Self {
         Self {
             position,
-            rotation: Vector3::new(
-                Rad(rotation_deg.x.to_radians()),
-                Rad(rotation_deg.y.to_radians()),
-                Rad(rotation_deg.z.to_radians()),
-            ),
+            rotation,
             scale,
         }
     }
 
-    pub fn from_radians(position: Vector3<f32>, rotation: Vector3<Rad<f32>>, scale: Vector3<f32>) -> Self {
-        Self { position, rotation, scale }
+    pub fn from_radians(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
+        Self {
+            position,
+            rotation: Quat::from(Euler {
+                x: Rad(rotation.x),
+                y: Rad(rotation.y),
+                z: Rad(rotation.z),
+            }),
+            scale
+        }
+    }
+
+    pub fn from_degrees(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
+        Self {
+            position,
+            rotation: Quat::from(Euler {
+                x: Deg(rotation.x),
+                y: Deg(rotation.y),
+                z: Deg(rotation.z)
+            }),
+            scale
+        }
     }
 
     pub fn to_model_matrix(&self) -> Mat4 {
-        let translation = Matrix4::from_translation(self.position);
-        let rotation = Matrix4::from_angle_x(self.rotation.x)
-                    * Matrix4::from_angle_y(self.rotation.y)
-                    * Matrix4::from_angle_z(self.rotation.z);
-        let scale = Matrix4::from_nonuniform_scale(
+        let translation = Mat4::from_translation(self.position);
+        let rotation = Mat4::from(self.rotation); 
+        let scale = Mat4::from_nonuniform_scale(
             self.scale.x,
             self.scale.y,
             self.scale.z,
@@ -74,5 +95,81 @@ impl Model {
 
     pub fn add_instances(&mut self, instances: &[ModelInstance]) {
         self.instances.extend_from_slice(instances);
+    }
+}
+
+//===============================================
+// Model-Graph
+//===============================================
+
+pub struct ModelGraph {
+    pub nodes: Vec<Rc<RefCell<Node>>>,
+    pub linear_nodes: Vec<Weak<RefCell<Node>>>,
+    pub materials: Vec<Material>,
+    pub animations: Vec<Animation>
+}
+
+impl ModelGraph {
+    pub fn find_node(self, name: &str) -> Option<Rc<RefCell<Node>>> {
+        self.linear_nodes
+            .iter()
+            .find(|weak_ref| {
+                weak_ref.upgrade()
+                    .map(|node| node.borrow().name == name)
+                    .unwrap_or(false)
+            })
+            .and_then(|weak_ref| weak_ref.upgrade())
+    }
+
+    pub fn update_function(&mut self, index: usize, delta_time: f32) -> Result<()> {
+        if self.animations.is_empty() || index >= self.animations.len() {
+            return Err(anyhow!("Invalid animation requested (empty animation list or ask for an animation index > animations lenght)"));
+        }
+
+        let animation = &mut self.animations[index];
+
+        animation.current_time += delta_time;
+        if animation.current_time > animation.end {
+            animation.current_time = animation.start;
+        }
+
+        animation.channels.iter()
+            .for_each(|channel| {
+                let sampler = &animation.samplers[channel.sampler_index];
+
+                let keyframe_it = sampler.inputs.partition_point(|&probe_time|
+                    probe_time <= animation.current_time);
+                
+                if keyframe_it < sampler.inputs.len() && keyframe_it > 0 {
+                    let i = keyframe_it - 1;
+
+                    let interp_factor = (animation.current_time - sampler.inputs[i])
+                        / (sampler.inputs[i + 1] - sampler.inputs[i]);
+                    
+                    if let Some(node) = channel.node.upgrade() {
+                        let mut node = node.borrow_mut();
+
+                        match channel.path {
+                            PathType::TRANSLATION => {
+                                let start = sampler.outputsVec3[i];
+                                let end = sampler.outputsVec3[i + 1];
+                                node.translation = start.lerp(end, interp_factor);
+                            }
+                            PathType::ROTATION => {
+                                let start = vec4_to_quat(sampler.outputsVec4[i]);
+                                let end = vec4_to_quat(sampler.outputsVec4[i + 1]);
+                                node.rotation = start.slerp(end, interp_factor);
+                            }
+                            PathType::SCALE => {
+                                let start = sampler.outputsVec3[i];
+                                let end = sampler.outputsVec3[i + 1];
+                                node.scale = start.lerp(end, interp_factor);
+                            }
+                        }
+                    }
+                }
+            });
+
+        Ok(())
     }
 }

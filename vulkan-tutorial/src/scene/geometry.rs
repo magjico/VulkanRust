@@ -123,3 +123,13 @@ pub struct Mesh {
     pub indices: Vec<u32>,
     pub material_index: i32,
 }
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            material_index: -1
+        }
+    }
+}
