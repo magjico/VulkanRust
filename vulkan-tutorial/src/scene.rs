@@ -9,6 +9,7 @@ pub use geometry::Mesh;
 
 pub use model::ModelInstance;
 pub use model::Model;
+pub use model::ModelGraph;
 
 pub use graph::Node;
 

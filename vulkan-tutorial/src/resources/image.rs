@@ -11,8 +11,7 @@ use crate::gpu::get_memory_type_index;
 /// - `instance` (&[`Instance`]) - Vulkan instance.
 /// - `device` (&[`Device`]) - Vulkan device.
 /// - `physical_device` ([`vk::PhysicalDevice`]) - GPU.
-/// - `width` (`u32`) - image width.
-/// - `height` (`u32`) - image height.
+/// - `extent` ( [vk::Extent3D] ) - image extent (width, height and depth). If the texture is 2D then depth value should be 1.
 /// - `mip_levels` (`u32`) - image mip levels (usualy 1 except for texture).
 /// - `samples` ([`vk::SampleCountFlags`]) - sampling count (flags) for aliasing.
 /// - `format` ([`vk::Format`]) - image format.
@@ -47,8 +46,7 @@ pub fn create_image(
 	instance: &Instance,
 	device: &Device,
 	physical_device: vk::PhysicalDevice,
-	width: u32,
-	height: u32,
+	extent: vk::Extent3D,
     mip_levels: u32,
 	samples: vk::SampleCountFlags,
 	format: vk::Format,
@@ -56,9 +54,17 @@ pub fn create_image(
 	usage: vk::ImageUsageFlags,
 	properties: vk::MemoryPropertyFlags,
 ) -> Result<(vk::Image, vk::DeviceMemory)> {
+	let image_type = if extent.depth > 1 {
+		vk::ImageType::_3D
+	} else if extent.height > 1 {
+		vk::ImageType::_2D
+	} else {
+		vk::ImageType::_1D
+	};
+
 	let info = vk::ImageCreateInfo::builder()
-		.image_type(vk::ImageType::_2D)
-		.extent(vk::Extent3D {width, height, depth: 1})
+		.image_type(image_type)
+		.extent(extent)
 		.mip_levels(mip_levels)
 		.array_layers(1)
 		.format(format)

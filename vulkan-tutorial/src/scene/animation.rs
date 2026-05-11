@@ -41,8 +41,8 @@ pub struct AnimationChannel {
 pub struct AnimationSampler {
     pub interpolation_type: InterpolationType,
     pub inputs: Vec<f32>,
-    pub outputsVec4: Vec<Vec4>,
-    pub outputsVec3: Vec<Vec3>,
+    pub outputs_vec4: Vec<Vec4>,
+    pub outputs_vec3: Vec<Vec3>,
 }
 
 /// Structure for animation

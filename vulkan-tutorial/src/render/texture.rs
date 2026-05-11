@@ -14,17 +14,13 @@ use crate::resources::{
 };
 use crate::ops::copy_buffer_to_image;
 
-/// Create a texture image from a .png.
-/// 
-/// 
-/// *__TODO:__ add the possibility to manually select the mipmaps level.*
+/// Create a texture image and its memory.
 /// 
 /// ## Arguments
 /// 
 /// - `instance` (&[`Instance`]) - Vulkan instance.
 /// - `device` (&[`Device`]) - Vulkan device.
 /// - `physical_device` ([`vk::PhysicalDevice`]) - Used physical device.
-/// - `texture_path` (`&str`) - path to the .png texture file.
 /// - `setup_command_buffer` ([`vk::CommandBuffer`]) - A command buffer to execute command from.
 /// - `graphics_queue` ([`vk::Queue`]) - A graphics queue to the send the command to the gpu.
 /// 
@@ -35,28 +31,20 @@ pub fn create_texture_image(
     instance: &Instance,
     device: &Device,
     physical_device: vk::PhysicalDevice,
-    texture_path: &str,
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
-) -> Result<(vk::Image, vk::DeviceMemory, u32)> {
-	let image = File::open(texture_path)?;
+    texture_extent: vk::Extent3D,
+    mip_levels: u32,
+    pixels: &[u8],
+    format: vk::Format,
+) -> Result<(vk::Image, vk::DeviceMemory)> {
+    let staging_size = pixels.len() as u64;
 
-	let io_buf = BufReader::new(image); // IO Buffer
-	let decoder = Decoder::new(io_buf); // PNG Decoder
-	let mut reader = decoder.read_info()?; // PNG reader
-
-	let size = reader.info().raw_bytes() as u64;
-	let (width, height) = reader.info().size();
-
-	let mut pixels = vec![0; size as usize];
-	reader.next_frame(&mut pixels)?;
-
-	
-	let (staging_buffer, staging_buffer_memory) = create_buffer(
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
 		instance,
 		device,
 		physical_device,
-		size,
+		staging_size,
 		vk::BufferUsageFlags::TRANSFER_SRC,
 		vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
 	)?;
@@ -64,7 +52,7 @@ pub fn create_texture_image(
 	let memory = unsafe { device.map_memory(
 		staging_buffer_memory,
 		0,
-		size,
+		staging_size,
 		vk::MemoryMapFlags::empty()
 	)?};
 
@@ -73,26 +61,20 @@ pub fn create_texture_image(
         device.unmap_memory(staging_buffer_memory);
     }
 
-    let mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
-
 	let (texture_image, texture_image_memory) = create_image(
         instance,
         device,
         physical_device,
-        width,
-        height,
+        texture_extent,
         mip_levels,
 		vk::SampleCountFlags::_1,
-        vk::Format::R8G8B8A8_SRGB,
+        format,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
-	
-	let texture_image_memory = texture_image_memory;
-	let texture_image = texture_image;
 
     begin_setup_command_buffer(&device, setup_command_buffer)?;
 
@@ -110,8 +92,8 @@ pub fn create_texture_image(
 		setup_command_buffer,
 		staging_buffer,
 		texture_image,
-		width,
-		height
+		texture_extent.width,
+		texture_extent.height
 	)?;
 
 	generate_mipmaps(
@@ -121,8 +103,8 @@ pub fn create_texture_image(
         setup_command_buffer,
 		texture_image,
 		vk::Format::R8G8B8A8_SRGB,
-		width,
-		height, 
+		texture_extent.width,
+		texture_extent.height, 
 		mip_levels
 	)?;
 
@@ -133,7 +115,7 @@ pub fn create_texture_image(
         device.free_memory(staging_buffer_memory, None);
     }
 
-	Ok((texture_image, texture_image_memory, mip_levels))
+	Ok((texture_image, texture_image_memory))
 }
 
 /// Create an image view of a texture image

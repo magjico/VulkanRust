@@ -15,11 +15,12 @@ use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
                     get_max_msaa_samples, create_logical_device, create_descriptor_set_layout,
                     create_pipeline};
 use crate::render::{UniformBufferObject, create_swapchain, create_swapchain_image_views,
-                    create_color_objects, create_depth_objects, create_texture_image,
+                    create_color_objects, create_depth_objects,
                     create_texture_image_view, create_texture_sampler};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
+use crate::assets::load_texture;
 use crate::scene::Model;
 use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects, load_models};
 use crate::math::Mat4;
@@ -1059,7 +1060,7 @@ impl TextureData {
         graphics_queue: vk::Queue,
         texture_path: &str,
     ) -> Result<Self> {
-        let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
+        let (texture_image, texture_image_memory, mip_levels) = load_texture(
             instance,
             device,
             physical_device,

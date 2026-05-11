@@ -151,18 +151,18 @@ impl ModelGraph {
 
                         match channel.path {
                             PathType::TRANSLATION => {
-                                let start = sampler.outputsVec3[i];
-                                let end = sampler.outputsVec3[i + 1];
+                                let start = sampler.outputs_vec3[i];
+                                let end = sampler.outputs_vec3[i + 1];
                                 node.translation = start.lerp(end, interp_factor);
                             }
                             PathType::ROTATION => {
-                                let start = vec4_to_quat(sampler.outputsVec4[i]);
-                                let end = vec4_to_quat(sampler.outputsVec4[i + 1]);
+                                let start = vec4_to_quat(sampler.outputs_vec4[i]);
+                                let end = vec4_to_quat(sampler.outputs_vec4[i + 1]);
                                 node.rotation = start.slerp(end, interp_factor);
                             }
                             PathType::SCALE => {
-                                let start = sampler.outputsVec3[i];
-                                let end = sampler.outputsVec3[i + 1];
+                                let start = sampler.outputs_vec3[i];
+                                let end = sampler.outputs_vec3[i + 1];
                                 node.scale = start.lerp(end, interp_factor);
                             }
                         }
