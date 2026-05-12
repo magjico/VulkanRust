@@ -8,6 +8,7 @@ pub enum PathType {
     TRANSLATION,
     ROTATION,
     SCALE,
+    MORPH,
 }
 
 pub enum InterpolationType {

@@ -12,6 +12,7 @@ thiserror = "2.0.18"		# used to define custom errors types without boilerplate
 vulkanalia = { version = "=0.35.0", features = ["libloading", "provisional", "window"] } # used to call the Vulkan API
 winit = "0.29.15" # used to create a window to render to
 rand = "0.10.1"
+itertools = "0.14.0"
 
 # i/o dependencies
 tobj = { version = "4.0.3", features = ["log"] } # used to load 3D models in the Wavefront .obj format

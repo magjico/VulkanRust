@@ -1,5 +1,6 @@
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
+use log::*;
 
 use anyhow::{Result, anyhow};
 
@@ -165,6 +166,10 @@ impl ModelGraph {
                                 let end = sampler.outputs_vec3[i + 1];
                                 node.scale = start.lerp(end, interp_factor);
                             }
+                            // TODO: support morph type animation
+                            PathType::MORPH => {
+                                warn!("Morph type animation not yet supported.")
+                            },
                         }
                     }
                 }

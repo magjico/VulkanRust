@@ -13,5 +13,8 @@ pub use model::ModelGraph;
 
 pub use graph::Node;
 
+pub use animation::InterpolationType;
+pub use animation::AnimationSampler;
+pub use animation::AnimationChannel;
 pub use animation::Animation;
 pub use animation::PathType;

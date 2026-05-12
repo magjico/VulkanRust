@@ -1,20 +1,25 @@
+use std::any::Any;
+use std::cell::RefCell;
 // TODO: implement a generic tray for all io / so we need to implement load and save in a generic way.
 use std::fs::File;
 use std::io::BufReader;
 use std::collections::HashMap;
+use std::rc::Rc;
 use anyhow::{Result, anyhow};
+use gltf::accessor::Dimensions;
+use gltf::animation::{Interpolation, Property, Sampler};
 use png::Decoder;
 use log::*;
 
-use cgmath::{vec2, vec3};
+use cgmath::{One, Quaternion, Zero, vec2, vec3};
 
 use gltf::{buffer::Data, image::Source, iter};
 use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use vulkanalia::prelude::v1_0::*;
 
-use crate::math::{Vec3, Vec4};
+use crate::math::{Quat, Vec2, Vec3, Vec4};
 use crate::render::{create_texture_image, create_texture_image_view, create_texture_sampler};
-use crate::scene::{Material, Mesh, ModelGraph, Vertex};
+use crate::scene::*;
 
 
 //===============================================
@@ -311,6 +316,115 @@ fn load_gltf_materials(
 
     Ok(materials)
 }
+
+fn load_gltf_animations(
+    animations: iter::Animations,
+    buffers: &[Data],
+    linear_nodes: &[Rc<RefCell<Node>>],
+) -> Result<Vec<Animation>> {
+    let animations: Vec<Animation> = animations.map(|anim| {
+        // Samplers
+        let samplers: Vec<AnimationSampler> = anim.samplers().map(|sampler| {
+            let interpolation_type = match sampler.interpolation() {
+                Interpolation::CubicSpline => InterpolationType::CUBICSPLINE,
+                Interpolation::Linear => InterpolationType::LINEAR,
+                Interpolation::Step => InterpolationType::STEP,
+            };
+
+            let inputs_access = sampler.input();
+            let inputs_view = inputs_access.view().unwrap();
+            let inputs_buffer = &buffers[inputs_view.buffer().index()];
+            let start = inputs_view.offset() + inputs_access.offset();
+            let inputs_data = &inputs_buffer[start..start + inputs_access.count() * inputs_access.size()];
+            let inputs: Vec<f32> = inputs_data.chunks(4) // f32 size
+                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect();
+
+            let outputs_access = sampler.output();
+            let outputs_view = outputs_access.view().unwrap();
+            let outputs_buffer = &buffers[outputs_view.buffer().index()];
+            let start = outputs_access.offset() + outputs_view.offset();
+            let output_data = &outputs_buffer[start..start + outputs_access.count() * outputs_access.size()];
+
+            let outputs_vec3;
+            let outputs_vec4;
+            match outputs_access.dimensions() {
+                Dimensions::Vec3 => {
+                    outputs_vec3 = output_data
+                        .chunks(12)
+                        .map(|chunk| Vec3::new(
+                            f32::from_be_bytes(chunk[0..4].try_into().unwrap()),
+                            f32::from_be_bytes(chunk[4..8].try_into().unwrap()),
+                            f32::from_be_bytes(chunk[8..12].try_into().unwrap())
+                        ))
+                        .collect();
+                    outputs_vec4 = Vec::new();
+                }
+                Dimensions::Vec4 => {
+                    outputs_vec3 = Vec::new();
+                    outputs_vec4 = output_data
+                        .chunks(16)
+                        .map(|chunk| Vec4::new(
+                            f32::from_be_bytes(chunk[0..4].try_into().unwrap()),
+                            f32::from_be_bytes(chunk[4..8].try_into().unwrap()),
+                            f32::from_be_bytes(chunk[8..12].try_into().unwrap()),
+                            f32::from_be_bytes(chunk[12..16].try_into().unwrap())
+                        ))
+                        .collect();
+                }
+                _ => {
+                    outputs_vec3 = Vec::new();
+                    outputs_vec4 = Vec::new();
+                }
+            }
+
+            AnimationSampler {
+                interpolation_type,
+                inputs,
+                outputs_vec4,
+                outputs_vec3,
+            }
+        }).collect();
+
+        // Channel
+        let channels: Vec<AnimationChannel> = anim.channels().map(|channel| {
+            let sampler_index = channel.sampler().index();
+            let path = match channel.target().property() {
+                Property::Translation => PathType::TRANSLATION,
+                Property::Rotation => PathType::ROTATION,
+                Property::Scale => PathType::SCALE,
+                Property::MorphTargetWeights => PathType::MORPH,
+            };
+
+            let node = Rc::downgrade(&linear_nodes[channel.target().node().index()]);
+
+            AnimationChannel {
+                path,
+                node,
+                sampler_index
+            }
+        })
+        .collect();
+
+        let (start, end) = samplers.iter().fold((f32::MAX, f32::MIN), |(start, end), s| {
+            let s_start = s.inputs.first().cloned().unwrap_or(f32::MAX);
+            let s_end   = s.inputs.last().cloned().unwrap_or(f32::MIN);
+            (start.min(s_start), end.max(s_end))
+        });
+
+        Animation {
+            name: anim.name().unwrap_or("").to_string(),
+            samplers,
+            channels,
+            start,
+            end,
+            current_time: 0.0,
+        }
+
+    }).collect();
+
+    Ok(animations)
+}
  
 pub fn load_gltf_model(
     device: &Device,
@@ -319,7 +433,7 @@ pub fn load_gltf_model(
     path: &str,
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
-) -> Result<()> {
+) -> Result<ModelGraph> {
     // warn: this method does not support reading gltf / glb from web.
     let (document, buffers, images) = gltf::import(path)?;
 
@@ -337,8 +451,100 @@ pub fn load_gltf_model(
     // 2 - load materials
     let materials = load_gltf_materials(document.materials())?;
 
+    // 3 - create a scene-graph
+    // Use a two-pass approach to ensure all nodes exist before we try to link them together.
+
+    // 3.a - create all nodes 
+    let linear_nodes: Vec<Rc<RefCell<Node>>> = document.nodes().map(|node| {
+        let (translation, rotation, scale) = match node.transform() {
+            gltf::scene::Transform::Matrix { matrix } => 
+                (Vec3::zero(), Quaternion::one(), Vec3::new(1.0, 1.0, 1.0)),
+            
+            gltf::scene::Transform::Decomposed { translation, rotation, scale } => (
+                    Vec3::new(translation[0], translation[1], translation[2]),
+                    Quat::new(rotation[3], rotation[0], rotation[1], rotation[2]),
+                    Vec3::new(scale[0], scale[1], scale[2])
+                ),
+        };
+
+        Rc::new(RefCell::new(Node {
+            name: node.name().unwrap_or("").to_string(),
+            translation,
+            rotation,
+            scale,
+
+            ..Node::default()
+        }))
+    }).collect();
+
+    for node in document.nodes() {
+        // 3.b - establish parent-child relationships
+        for child in node.children() {
+            let parent_rc = Rc::clone(&linear_nodes[node.index()]);
+            let child_rc = Rc::clone(&linear_nodes[child.index()]);
+
+            // child -> parent
+            child_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
+            // parent -> child
+            parent_rc.borrow_mut().childs.push(Rc::clone(&child_rc));
+        }
+
+        // 4 - Load Mesh
+        if let Some(gltf_mesh) = node.mesh() {
+            let mut mesh = Mesh::default();
+
+            for primitive in gltf_mesh.primitives() {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+
+                if let Some(iter) = reader.read_indices() {
+                    mesh.material_index = primitive.material().index().map(|i| i as i32).unwrap_or(-1);
+
+                    let positions = reader.read_positions().unwrap();
+                    let mut normals = reader.read_normals();
+                    let mut tex_coords = reader.read_tex_coords(0).map(|t| t.into_f32());
+
+                    for p in positions {
+                        let n = normals.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0, 1.0]);
+                        let t = tex_coords.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0]);
+
+                        mesh.vertices.push(Vertex {
+                            pos:       Vec3::new(p[0], p[1], p[2]),
+                            normal:    Vec3::new(n[0], n[1], n[2]),
+                            color:     Vec3::new(1.0, 1.0, 1.0),
+                            tex_coord: Vec2::new(t[0], t[1]),
+                        });
+                    }
+
+                    mesh.indices.extend(iter.into_u32());
+                }
+                else {
+                    warn!("Primitive without index; skipping.")
+                }
+            }
+            
+            linear_nodes[node.index()].borrow_mut().mesh = Some(mesh);
+        }
+        
+    }
+
+    let nodes: Vec<Rc<RefCell<Node>>> = document.default_scene()
+        .unwrap_or_else(|| document.scenes().next().unwrap())
+        .nodes()
+        .map(|node| Rc::clone(&linear_nodes[node.index()]))
+        .collect();
+
+    // 5 - animations
+    let animations = load_gltf_animations(
+        document.animations(),
+        &buffers,
+        &linear_nodes
+    )?;
 
 
-
-    Ok(())
+    Ok(ModelGraph {
+        nodes,
+        linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
+        materials,
+        animations
+    })
 }
