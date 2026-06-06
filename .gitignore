@@ -8,6 +8,10 @@ docs/graphic_computing_help/*
 # Binary
 *.spv
 
+# Model
+*.glb
+*.gltf
+
 # Texture
 vulkan-tutorial/resources/textures/*
 

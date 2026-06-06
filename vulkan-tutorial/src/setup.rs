@@ -2,12 +2,14 @@
 use rand::RngExt;
 use crate::math::*;
 
+use log::*;
+
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::render::UniformBufferObject;
-use crate::scene::{Model, ModelInstance};
+use crate::render::{TextureData, UniformBufferObject, create_texture_image, create_texture_image_view, create_texture_sampler};
+use crate::scene::{Material, Model, ModelInstance};
 use crate::constants::*;
 
 //===============================================
@@ -27,7 +29,8 @@ use crate::constants::*;
 /// - `Result<vk::DescriptorPool>`.
 pub fn create_descriptor_pool(
     device: &Device,
-    swapchain_images_count: u32
+    swapchain_images_count: u32,
+    material_count: u32,
 ) -> Result<vk::DescriptorPool> {
     let ubo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
@@ -35,12 +38,12 @@ pub fn create_descriptor_pool(
 
     let sampler_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(swapchain_images_count);
+        .descriptor_count(material_count * 5);
 
     let pool_sizes = &[ubo_size, sampler_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count);
+        .max_sets(swapchain_images_count + material_count);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -48,33 +51,27 @@ pub fn create_descriptor_pool(
 }
 
 /// Generate multiple descriptor set for each swapchain image.
-/// With those the shaders will have access to the UBO and texture sampling.
-/// 
-/// note: you can only use this function after generating the descriptor pool for it.
+/// With those the shaders will have access to the UBO.
 /// 
 /// ## Arguments
 /// 
 /// - `device` ( &[Device] ) - The Vulkan device.
-/// - `swapchain_images_count` (`usize`) - number of swapchain images.
-/// - `descriptor_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_descriptor_set_layout].
-/// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
-/// - `uniform_buffers` (`&[vk::Buffer]`).
-/// - `texture_image_view` ( [vk::ImageView] ).
-/// - `texture_sampler` ( [vk::Sampler] ) - texture sampler.
+/// - `swapchain_images_count` ( `usize` ) - number of swapchain images.
+/// - `global_set_layout` ( [`vk::DescriptorSetLayout`] ) - see [create_global_set_layout].
+/// - `descriptor_pool` ( [`vk::DescriptorPool`] ) - see [create_descriptor_pool].
+/// - `uniform_buffers` ( &[vk::Buffer] ).
 /// 
 /// ## Returns
 /// 
 /// - `Result<Vec<vk::DescriptorSet>>`.
-pub fn create_descriptor_sets(
+pub fn create_global_descriptor_sets(
     device: &Device,
     swapchain_images_count: usize,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    global_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     uniform_buffers: &[vk::Buffer],
-    texture_image_view: vk::ImageView,
-    texture_sampler: vk::Sampler,
 ) -> Result<Vec<vk::DescriptorSet>> {
-    let layouts = vec![descriptor_set_layout; swapchain_images_count];
+    let layouts = vec![global_set_layout; swapchain_images_count];
 
     let info = vk::DescriptorSetAllocateInfo::builder()
         .descriptor_pool(descriptor_pool)
@@ -90,6 +87,7 @@ pub fn create_descriptor_sets(
             .range(size_of::<UniformBufferObject>() as u64);
 
         let buffer_info = &[info];
+        
         let ubo_write = vk::WriteDescriptorSet::builder()
             .dst_set(descriptor_sets[i])
             .dst_binding(0)
@@ -97,24 +95,86 @@ pub fn create_descriptor_sets(
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .buffer_info(buffer_info);
 
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(texture_image_view)
-            .sampler(texture_sampler);
-
-        let image_info = &[info];
-        let sampler_write = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_sets[i])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(image_info);
-
-        unsafe { device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+        unsafe { device.update_descriptor_sets(&[ubo_write], &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)
 }
+
+
+/// Generate multiple descriptor set for each swapchain image.
+/// With those the shaders will have access to the textures.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `material_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_material_set_layout].
+/// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
+/// - materials (&\[[Material]]),
+/// - textures (&\[[TextureData]]),
+/// - default_texture (&[TextureData]),
+/// 
+/// ## Returns
+/// 
+/// - `Result<Vec<vk::DescriptorSet>>`.
+pub fn create_material_descriptor_sets(
+    device: &Device,
+    material_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    materials: &[Material],
+    textures: &[TextureData],
+    default_texture: &TextureData,
+) -> Result<Vec<vk::DescriptorSet>> {
+    let layouts = vec![material_set_layout; materials.len()];
+
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(&layouts);
+
+    // to return
+    let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
+
+    // helper function to get texture or the default one
+    let get_texture = |idx: i32| -> &TextureData {
+        if idx >= 0 && textures.len() > idx as usize { &textures[idx as usize] } else { default_texture } 
+    };
+
+    for (i, material) in materials.iter().enumerate() {
+        debug!("material indices:\n\t- base = {}\n\t- metallic = {}\n\t- normal = {}\n\t- occlusion = {}\n\t- emissive = {}",
+            material.base_color_texture_idx,
+            material.metallic_roughness_texture_idx,
+            material.normal_texture_idx,
+            material.occlusion_texture_idx,
+            material.emissive_texture_idx,
+        );
+
+        let image_infos: Vec<vk::DescriptorImageInfo> = vec![
+            material.base_color_texture_idx,
+            material.metallic_roughness_texture_idx,
+            material.normal_texture_idx,
+            material.occlusion_texture_idx,
+            material.emissive_texture_idx,
+        ].iter().map(|&idx| {
+            let tex = get_texture(idx);
+            *vk::DescriptorImageInfo::builder()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(tex.image_view)
+                .sampler(tex.sampler)
+        }).collect();
+
+        let sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos);
+
+        unsafe { device.update_descriptor_sets(&[sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+    }
+
+    Ok(descriptor_sets)
+}
+
 
 //===============================================
 // Sync objects
@@ -207,7 +267,7 @@ pub fn setup_object_instances() -> Result<Vec<ModelInstance>> {
     Ok(object_instances)
 }
 
-/// load a lot of models and setup their instances for testing purposes.
+/// load models and setup their instances for testing purposes.
 pub fn load_models() -> Result<Vec<Model>> {
     let mut models = Vec::new();
 
@@ -217,4 +277,50 @@ pub fn load_models() -> Result<Vec<Model>> {
     models.push(model);
 
     Ok(models)
+}
+
+//===============================================
+// defaults
+//===============================================
+
+pub fn create_default_texture(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    setup_command_buffer: vk::CommandBuffer,
+    graphics_queue: vk::Queue,
+) -> Result<TextureData> {
+    // White Pixel 1x1 RGBA
+    let pixels = [255u8, 255, 255, 255];
+
+    let extent = vk::Extent3D {
+        width: 1,
+        height: 1,
+        depth: 1,
+    };
+
+    let mip_levels = 1;
+
+    let (image, image_memory) = create_texture_image(
+        instance,
+        device,
+        physical_device,
+        setup_command_buffer,
+        graphics_queue,
+        extent,
+        mip_levels,
+        &pixels,
+        vk::Format::R8G8B8A8_SRGB,
+    )?;
+
+    let image_view = create_texture_image_view(device, image, mip_levels)?;
+    let sampler = create_texture_sampler(device, mip_levels as f32)?;
+
+    Ok(TextureData {
+        image,
+        image_memory,
+        image_view,
+        sampler,
+        mip_levels,
+    })
 }

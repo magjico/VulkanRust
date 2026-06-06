@@ -103,6 +103,7 @@ impl Model {
 // Model-Graph
 //===============================================
 
+#[derive(Clone, Debug)]
 pub struct ModelGraph {
     pub nodes: Vec<Rc<RefCell<Node>>>,
     pub linear_nodes: Vec<Weak<RefCell<Node>>>,

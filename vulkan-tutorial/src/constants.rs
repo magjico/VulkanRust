@@ -42,11 +42,21 @@ pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSIO
     vk::KHR_SYNCHRONIZATION2_EXTENSION.name, vk::KHR_DYNAMIC_RENDERING_EXTENSION.name];
 /// The maximum number of frames that can be processed concurrently.
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
-/// The texture test path
-pub const TEXTURE_PATH: &str = "resources/textures/viking_room.png";
-/// The obj test path
-pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
 /// Vert shader
 pub const VERT: &[u8] = include_bytes!("../shaders/hello_model/vert.spv");
 /// Frag shader
 pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
+
+//==================================
+// Assets Paths
+//==================================
+
+// 1 - Viking room
+/// The texture test path
+pub const TEXTURE_PATH: &str = "resources/textures/viking_room.png";
+/// The obj test path
+pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
+
+// 2 - glb Duck 
+/// Duck path
+pub const DUCK_PATH: &str = "resources/glb/Duck.glb";

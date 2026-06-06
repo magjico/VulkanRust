@@ -4,6 +4,7 @@ use super::Node;
 
 use crate::math::*;
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum PathType {
     TRANSLATION,
     ROTATION,
@@ -11,6 +12,7 @@ pub enum PathType {
     MORPH,
 }
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum InterpolationType {
     LINEAR,
     STEP,
@@ -24,6 +26,7 @@ pub enum InterpolationType {
 /// - `path` ( [PathType] ) - type of key-frame animation.
 /// - `node` ( Weak<RefCell<[Node]>> ) - reference to a model node (from a scene-graph) to animate.
 /// - `sampler_index` ( usize ) - index inside a [AnimationSampler] table.
+#[derive(Clone, Debug)]
 pub struct AnimationChannel {
     pub path: PathType,
     pub node: Weak<RefCell<Node>>,
@@ -39,6 +42,7 @@ pub struct AnimationChannel {
 /// - `inputs` ( Vec\<f32> ) - Key frame timestamps.
 /// - `outputsVec4` ( Vec\<Vec4> ) - Key frame values (for rotations).
 /// - `outputsVec3` ( Vec\<Vec3> ) - Key frame values (for translations and scales).
+#[derive(Clone, Debug)]
 pub struct AnimationSampler {
     pub interpolation_type: InterpolationType,
     pub inputs: Vec<f32>,
@@ -56,6 +60,7 @@ pub struct AnimationSampler {
 /// - `start` ( f32 ) - animation start time value.
 /// - `end` ( f32 ) - animation end time value.
 /// - `current_time` ( f32 ) - current animation time value.
+#[derive(Clone, Debug)]
 pub struct Animation {
     pub name: String,
     pub samplers: Vec<AnimationSampler>,

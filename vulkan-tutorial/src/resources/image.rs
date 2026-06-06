@@ -54,12 +54,11 @@ pub fn create_image(
 	usage: vk::ImageUsageFlags,
 	properties: vk::MemoryPropertyFlags,
 ) -> Result<(vk::Image, vk::DeviceMemory)> {
+	// TODO: manage the 1D texture case.
 	let image_type = if extent.depth > 1 {
 		vk::ImageType::_3D
-	} else if extent.height > 1 {
+	} else  {
 		vk::ImageType::_2D
-	} else {
-		vk::ImageType::_1D
 	};
 
 	let info = vk::ImageCreateInfo::builder()

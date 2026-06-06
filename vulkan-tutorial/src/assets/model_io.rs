@@ -1,26 +1,36 @@
-use std::any::Any;
-use std::cell::RefCell;
 // TODO: implement a generic tray for all io / so we need to implement load and save in a generic way.
 use std::fs::File;
 use std::io::BufReader;
 use std::collections::HashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
+
 use anyhow::{Result, anyhow};
-use gltf::accessor::Dimensions;
-use gltf::animation::{Interpolation, Property, Sampler};
+use cgmath::{One, Quaternion, Zero, vec2, vec3};
+
+use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use png::Decoder;
 use log::*;
 
-use cgmath::{One, Quaternion, Zero, vec2, vec3};
+use gltf::iter;
+use gltf::buffer::Data;
+use gltf::image::Source;
+use gltf::accessor::Dimensions;
+use gltf::animation::{Interpolation, Property};
 
-use gltf::{buffer::Data, image::Source, iter};
-use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use vulkanalia::prelude::v1_0::*;
 
-use crate::math::{Quat, Vec2, Vec3, Vec4};
-use crate::render::{create_texture_image, create_texture_image_view, create_texture_sampler};
+use crate::math::*;
+use crate::render::*;
 use crate::scene::*;
 
+//===============================================
+// assets file
+//===============================================
+
+pub fn load_assets() {
+    
+} 
 
 //===============================================
 // texture file
@@ -86,11 +96,11 @@ pub fn load_texture(
 
 /// Load a .obj 3D model and return its vertices and the associated indexes.
 /// 
-/// # Arguments
+/// ## Arguments
 /// 
 /// - `path` (`&str`) - path to the .obj
 /// 
-/// # Returns
+/// ## Returns
 /// 
 /// - `Result<(Vec<Vertex>, Vec<u32>)>` - vertices and indices.
 pub fn load_obj_model(path: &str) -> Result<Mesh> {
@@ -153,6 +163,39 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
     Ok(Mesh {vertices, indices, material_index: -1})
 }
 
+pub fn load_3d_content(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    obj_path: &str,
+    texture_path: &str,
+    setup_command_buffer: vk::CommandBuffer,
+    graphics_queue: vk::Queue,
+) -> Result<(Mesh, TextureData)> {
+    let mesh = load_obj_model(obj_path)?;
+    let (texture_image, texture_image_memory, mip_levels) = load_texture(
+        instance,
+        device,
+        physical_device,
+        texture_path,
+        setup_command_buffer,
+        graphics_queue
+    )?;
+
+    let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
+    let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
+
+    let texture = TextureData {
+        image: texture_image,
+        image_memory: texture_image_memory,
+        image_view: texture_image_view,
+        sampler: texture_sampler,
+        mip_levels
+    };
+
+    Ok((mesh, texture))
+}
+
 //===============================================
 // glTF
 //===============================================
@@ -165,8 +208,7 @@ fn load_gltf_textures(
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
     buffers: &[Data],
-) -> Result<Vec<(vk::Image, vk::DeviceMemory, vk::ImageView, vk::Sampler)>> {
-
+) -> Result<Vec<TextureData>> {
     let mut vk_textures = Vec::new();
     'texture: for (i, texture) in textures.enumerate() {
         let image = texture.source();
@@ -177,6 +219,8 @@ fn load_gltf_textures(
         //     .unwrap_or_else(|| format!("texture_{}", i));
 
         // 1 - check if the image is embedded as KTX2
+        // TODO: add support for .png texture.
+        debug!("Texture source type: {:?}", image.source());
         let ktx2_data: Vec<u8> = match image.source() {
             Source::View { view, mime_type } if mime_type == "image/ktx2" => {
                     let buffer_data = &buffers[view.buffer().index()];
@@ -268,7 +312,14 @@ fn load_gltf_textures(
         let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
         let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
                 
-        vk_textures.push((texture_image, texture_image_memory, texture_image_view, texture_sampler));
+        // vk_textures.push((texture_image, texture_image_memory, texture_image_view, texture_sampler));
+        vk_textures.push(TextureData {
+            image: texture_image,
+            image_memory: texture_image_memory,
+            image_view: texture_image_view,
+            sampler: texture_sampler,
+            mip_levels
+        });
     }
 
     Ok(vk_textures)
@@ -433,9 +484,9 @@ pub fn load_gltf_model(
     path: &str,
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
-) -> Result<ModelGraph> {
+) -> Result<(ModelGraph, Vec<TextureData>)> {
     // warn: this method does not support reading gltf / glb from web.
-    let (document, buffers, images) = gltf::import(path)?;
+    let (document, buffers, _) = gltf::import(path)?;
 
     // 1 - load textures
     let textures = load_gltf_textures(
@@ -457,8 +508,10 @@ pub fn load_gltf_model(
     // 3.a - create all nodes 
     let linear_nodes: Vec<Rc<RefCell<Node>>> = document.nodes().map(|node| {
         let (translation, rotation, scale) = match node.transform() {
-            gltf::scene::Transform::Matrix { matrix } => 
-                (Vec3::zero(), Quaternion::one(), Vec3::new(1.0, 1.0, 1.0)),
+            gltf::scene::Transform::Matrix { matrix: _ } => {
+                warn!("Matrix transform not yet supported, using identity.");
+                (Vec3::zero(), Quaternion::one(), Vec3::new(1.0, 1.0, 1.0))
+            },
             
             gltf::scene::Transform::Decomposed { translation, rotation, scale } => (
                     Vec3::new(translation[0], translation[1], translation[2]),
@@ -499,7 +552,7 @@ pub fn load_gltf_model(
                 if let Some(iter) = reader.read_indices() {
                     mesh.material_index = primitive.material().index().map(|i| i as i32).unwrap_or(-1);
 
-                    let positions = reader.read_positions().unwrap();
+                    let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
                     let mut tex_coords = reader.read_tex_coords(0).map(|t| t.into_f32());
 
@@ -528,7 +581,8 @@ pub fn load_gltf_model(
     }
 
     let nodes: Vec<Rc<RefCell<Node>>> = document.default_scene()
-        .unwrap_or_else(|| document.scenes().next().unwrap())
+        .or_else(|| document.scenes().next())
+        .ok_or_else(|| anyhow!("glTF has no scene"))?
         .nodes()
         .map(|node| Rc::clone(&linear_nodes[node.index()]))
         .collect();
@@ -540,11 +594,13 @@ pub fn load_gltf_model(
         &linear_nodes
     )?;
 
-
-    Ok(ModelGraph {
-        nodes,
-        linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
-        materials,
-        animations
-    })
+    Ok((
+        ModelGraph {
+            nodes,
+            linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
+            materials,
+            animations
+        },
+        textures
+    ))
 }

@@ -9,26 +9,41 @@ use crate::scene::Vertex;
 // Descriptor Set
 //===========================================
 
-pub fn create_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+/// create **UBO** descriptor set layout.
+pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    // Base-color binding
     let ubo_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
 
-    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
-        .binding(1)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-
-    let bindings = &[ubo_binding, sampler_binding];
+    let bindings = &[ubo_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
 
     Ok(descriptor_set_layout)
+}
+
+/// create material set layout in this order:
+/// base color, metallic-roughness, normal map, occlusion map, emissive map.
+pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let bindings: Vec<vk::DescriptorSetLayoutBinding>  = (0..5u32)
+        .map(|i| *vk::DescriptorSetLayoutBinding::builder()
+            .binding(i)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        ).collect();
+    
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(&bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+
 }
 
 //===========================================
@@ -51,7 +66,8 @@ pub fn create_pipeline(
     swapchain_format: vk::Format,
     depth_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    global_set_layout: vk::DescriptorSetLayout,
+    material_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     // Stages
     let vert_shader_module = create_shader_module(device, &vert[..])?;
@@ -153,7 +169,7 @@ pub fn create_pipeline(
         .size(4);
 
     // Layout
-    let set_layouts = &[descriptor_set_layout];
+    let set_layouts = &[global_set_layout, material_set_layout];
     let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
         .push_constant_ranges(push_constant_ranges)

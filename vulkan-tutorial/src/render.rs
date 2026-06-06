@@ -13,6 +13,7 @@ pub use texture::create_texture_image;
 pub use texture::create_texture_sampler;
 pub use texture::create_texture_image_view;
 pub use texture::generate_mipmaps;
+pub use texture::TextureData;
 
 pub use uniform::UniformBufferObject;
 

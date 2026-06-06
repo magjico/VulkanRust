@@ -1,9 +1,6 @@
-use std::fs::File;
-use std::io::BufReader;
 use std::ptr::copy_nonoverlapping as memcpy;
 
 use anyhow::{Result, anyhow};
-use png::Decoder;
 
 use vulkanalia::prelude::v1_0::*;
 
@@ -13,6 +10,26 @@ use crate::resources::{
     begin_setup_command_buffer, flush_setup_command_buffer,
 };
 use crate::ops::copy_buffer_to_image;
+
+/// only use to store texture data (for now).
+#[derive(Clone, Debug)]
+pub struct TextureData {
+    pub image: vk::Image,
+    pub image_memory: vk::DeviceMemory,
+    pub image_view: vk::ImageView,
+    pub sampler: vk::Sampler,
+    pub mip_levels: u32
+}
+
+impl TextureData {
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&mut self, device: &Device) {
+        device.destroy_sampler(self.sampler, None);
+        device.destroy_image_view(self.image_view, None);
+        device.destroy_image(self.image, None);
+        device.free_memory(self.image_memory, None);
+    }
+}
 
 /// Create a texture image and its memory.
 /// 

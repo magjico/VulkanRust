@@ -4,25 +4,27 @@ use cgmath::{Deg, vec3, point3};
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
+use log::*;
+
 use winit::window::Window;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
 
-use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, FRAG, MAX_FRAMES_IN_FLIGHT, TEXTURE_PATH, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
+use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, DUCK_PATH, FRAG, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
 use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
-                    get_max_msaa_samples, create_logical_device, create_descriptor_set_layout,
-                    create_pipeline};
-use crate::render::{UniformBufferObject, create_swapchain, create_swapchain_image_views,
-                    create_color_objects, create_depth_objects,
-                    create_texture_image_view, create_texture_sampler};
+                    get_max_msaa_samples, create_logical_device, create_global_descriptor_set_layout,
+                    create_material_descriptor_set_layout, create_pipeline};
+use crate::render::{UniformBufferObject, TextureData, create_color_objects, create_depth_objects,
+                    create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::assets::load_texture;
-use crate::scene::Model;
-use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects, load_models};
+use crate::assets::{load_gltf_model};
+use crate::scene::{Material, ModelGraph, Node};
+use crate::setup::{create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets,
+                    create_sync_objects, create_default_texture};
 use crate::math::Mat4;
 
 //===================================================
@@ -138,32 +140,42 @@ impl App {
         )?;
 
         // 7. pipeline
-        let descriptor_set_layout = create_descriptor_set_layout(&device)?;
+        let descriptor_layout_data = DescriptorLayoutData::create(&device)?;
 
         let pipeline_data = PipelineData::create(
             &device,
             swapchain_data.swapchain_format,
             swapchain_data.swapchain_extent,
             depth_data.depth_format,
-            descriptor_set_layout,
+            &descriptor_layout_data,
             msaa_samples,
             VERT,
             FRAG
         )?;
         
+        // load .glb model
+        let (duck_model, duck_textures) = load_gltf_model(
+            &device,
+            &instance,
+            physical_device,
+            DUCK_PATH,
+            command_data.setup_command_buffer,
+            graphics_queue
+        )?;
+
         // 8. texture
-        let texture_data = TextureData::create(
+        let textures_data = duck_textures;
+
+        let default_texture = create_default_texture(
             &instance,
             &device,
             physical_device,
             command_data.setup_command_buffer,
-            graphics_queue,
-            TEXTURE_PATH
+            graphics_queue
         )?;
 
         // 9. model
-        let models = load_models()?;
-        let models_data = ModelsData::create(models); 
+        let models_data= duck_model;
 
         // 10. buffers
         let buffers_data = BuffersData::create(
@@ -179,11 +191,12 @@ impl App {
         // 11. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
-            descriptor_set_layout,
+            &descriptor_layout_data,
             &buffers_data.uniform_buffers,
-            texture_data.texture_image_view,
-            texture_data.texture_sampler,
-            swapchain_data.swapchain_images.len()
+            &textures_data,
+            &default_texture,
+            &models_data.materials,
+            swapchain_data.swapchain_images.len(),
         )?;
         
         // 12. sync
@@ -197,17 +210,18 @@ impl App {
             surface,
             device_data,
             swapchain_data,
-            descriptor_set_layout,
+            descriptor_layout_data,
             pipeline_data,
             models_data,
             buffers_data,
             descriptor_data,
             command_data,
             sync_data,
-            texture_data,
+            textures_data,
             depth_data,
             color_data,
-            messenger
+            messenger,
+            default_texture
         };
 
         Ok( Self {
@@ -222,16 +236,18 @@ impl App {
         })
     }
 
-    /// Destroys our Vulkan app.
+    /// Destroy Vulkan app.
     #[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
 
         // Destroy Appdata
+        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         self.destroy_swapchain();
-        self.data.texture_data.destroy(&self.device);
-        self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
+        self.data.textures_data.iter_mut().for_each(|t| t.destroy(&self.device));
+        self.data.default_texture.destroy(&self.device);
+        self.data.descriptor_layout_data.destroy(&self.device);
         self.data.sync_data.destroy(&self.device);
         destroy_buffers(&self.device, &[self.data.buffers_data.interleaved_buffer], &[self.data.buffers_data.interleaved_buffer_memory]);
         self.data.command_data.destroy(&self.device);
@@ -250,8 +266,7 @@ impl App {
     #[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn destroy_swapchain(&mut self) {
-        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
-
+        // self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         destroy_buffers(
             &self.device,
             &self.data.buffers_data.uniform_buffers,
@@ -281,17 +296,6 @@ impl App {
             &mut self.data.device_data.queue_family_indices,
         )?;
 
-        self.data.pipeline_data = PipelineData::create(
-            &self.device,
-            self.data.swapchain_data.swapchain_format,
-            self.data.swapchain_data.swapchain_extent,
-            self.data.depth_data.depth_format,
-            self.data.descriptor_set_layout,
-            self.data.device_data.msaa_samples,
-            VERT,
-            FRAG,
-        )?;
-
         self.data.color_data = ColorData::create(
             &self.instance,
             &self.device,
@@ -311,6 +315,17 @@ impl App {
             self.data.device_data.msaa_samples,
         )?;
 
+        self.data.pipeline_data = PipelineData::create(
+            &self.device,
+            self.data.swapchain_data.swapchain_format,
+            self.data.swapchain_data.swapchain_extent,
+            self.data.depth_data.depth_format,
+            &self.data.descriptor_layout_data,
+            self.data.device_data.msaa_samples,
+            VERT,
+            FRAG,
+        )?;
+
         (self.data.buffers_data.uniform_buffers, self.data.buffers_data.uniform_buffers_memory) = create_uniform_buffers(
             &self.instance,
             &self.device,
@@ -318,13 +333,19 @@ impl App {
             self.data.swapchain_data.swapchain_images.len()
         )?;
 
-        self.data.descriptor_data = DescriptorData::create(
+        // self.data.descriptor_data = DescriptorData::create(
+        //     &self.device,
+        //     &self.data.descriptor_layout_data,
+        //     &self.data.buffers_data.uniform_buffers,
+        //     &self.data.textures_data,
+        //     &self.data.default_texture,
+        //     &self.data.models_data.materials,
+        //     self.data.swapchain_data.swapchain_images.len()
+        // )?;
+
+        self.data.descriptor_data.update_global_descriptor_set(
             &self.device,
-            self.data.descriptor_set_layout,
-            &self.data.buffers_data.uniform_buffers,
-            self.data.texture_data.texture_image_view,
-            self.data.texture_data.texture_sampler,
-            self.data.swapchain_data.swapchain_images.len()
+            &self.data.buffers_data.uniform_buffers
         )?;
 
         (self.data.command_data.command_buffers, self.data.command_data.secondary_command_buffers) = create_command_buffers(
@@ -375,7 +396,7 @@ impl App {
             &self.data.swapchain_data,
             &self.data.color_data,
             &self.data.depth_data,
-            &self.data.descriptor_data.descriptor_sets,
+            &self.data.descriptor_data,
             self.data.device_data.msaa_samples,
             image_index,
         )?;
@@ -423,16 +444,16 @@ impl App {
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         let view = Mat4::look_at_rh(
-            point3(0.0, 0.0, 5.0),
+            point3(0.0, 0.0, 500.0),
             point3(0.0, 0.0, 0.0),
             vec3(0.0, 1.0, 0.0)
         );
 
         let proj = CORRECTION * cgmath::perspective(
-            Deg(90.0),
+            Deg(45.0),
             self.data.swapchain_data.swapchain_extent.width as f32 / self.data.swapchain_data.swapchain_extent.height as f32,
             0.1,
-            20.0
+            1000.0
         );
 
         let ubo = UniformBufferObject { view, proj };
@@ -468,10 +489,12 @@ pub struct AppData {
     // Swapchain
     pub swapchain_data: SwapchainData,
     // Pipeline
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_layout_data: DescriptorLayoutData,
     pub pipeline_data: PipelineData,
     // Models
-    pub models_data: ModelsData,
+    pub models_data: ModelGraph,
+    // Texture
+	pub textures_data: Vec<TextureData>,
     // Buffers
     pub buffers_data: BuffersData,
     // Descriptor
@@ -480,14 +503,15 @@ pub struct AppData {
     pub command_data: CommandData,
     // Sync Objects
     pub sync_data: SyncData,
-	// Texture
-	pub texture_data: TextureData,
     // Depth
     pub depth_data: DepthData,
 	// Render target (now only use for MSAA)
 	pub color_data: ColorData,
     // Debug
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
+
+    // app-data const
+    pub default_texture: TextureData,
 }
 
 #[derive(Clone, Debug)]
@@ -580,7 +604,7 @@ impl PipelineData {
         swapchain_format: vk::Format,
         swapchain_extent: vk::Extent2D,
         depth_format: vk::Format,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        descriptor_layout_data: &DescriptorLayoutData,
         msaa_samples: vk::SampleCountFlags,
         vert: &[u8],
         frag: &[u8],
@@ -593,7 +617,8 @@ impl PipelineData {
             swapchain_format,
             depth_format,
             msaa_samples,
-            descriptor_set_layout
+            descriptor_layout_data.global_set_layout,
+            descriptor_layout_data.material_set_layout
         )?;
 
         Ok(Self {
@@ -606,22 +631,6 @@ impl PipelineData {
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ModelsData {
-    // TODO: change this later for a models organisation architectures
-    pub models: Vec<Model>
-}
-
-impl ModelsData {
-    pub fn create(
-        models: Vec<Model>,
-    ) -> Self {
-        Self {
-            models,
-        }
     }
 }
 
@@ -639,23 +648,41 @@ impl BuffersData {
         instance: &Instance,
         device: &Device,
         physical_device: vk::PhysicalDevice,
-        models_data: &ModelsData,
+        models_data: &ModelGraph,
         setup_command_buffer: vk::CommandBuffer,
         graphics_queue: vk::Queue,
         images_count: usize,
     ) -> Result<Self> {
-        // TODO: change this later to support multiple models
-        let model = &models_data.models[0];
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for w_node in &models_data.linear_nodes {
+            if let Some(ref_node) = w_node.upgrade() {
+                match ref_node.try_borrow() {
+                    Ok(node) => {
+                        if let Some(mesh) = &node.mesh {
+                            vertices.extend_from_slice(&mesh.vertices);
+                            indices.extend_from_slice(&mesh.indices);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("could not load a model node: {}", e);
+                        continue;
+                    },
+                };
+            }
+        }
 
         let (interleaved_buffer, interleaved_buffer_memory, index_offset) = create_interleaved_buffer(
             instance,
             device,
             physical_device,
-            &model.mesh.vertices,
-            &model.mesh.indices,
+            &vertices,
+            &indices,
             setup_command_buffer,
             graphics_queue,
         )?;
+
         let (uniform_buffers, uniform_buffers_memory) = create_uniform_buffers(
             instance,
             device,
@@ -674,32 +701,97 @@ impl BuffersData {
 }
 
 #[derive(Clone, Debug)]
+pub struct DescriptorLayoutData {
+    pub global_set_layout: vk::DescriptorSetLayout,
+    pub material_set_layout: vk::DescriptorSetLayout,
+}
+
+impl DescriptorLayoutData {
+    pub fn create(
+        device: &Device,
+    ) -> Result<Self> {
+        let global_set_layout = create_global_descriptor_set_layout(&device)?;
+        let material_set_layout = create_material_descriptor_set_layout(&device)?;
+
+        Ok(Self { global_set_layout, material_set_layout })
+    }
+
+    #[rustfmt::skip]
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&mut self, device: &Device) {
+        device.destroy_descriptor_set_layout(self.global_set_layout, None);
+        device.destroy_descriptor_set_layout(self.material_set_layout, None);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct DescriptorData {
     pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub global_descriptor_sets: Vec<vk::DescriptorSet>,
+    pub material_descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
 impl DescriptorData {
-    pub fn create(
+    pub fn  create(
         device: &Device,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        descriptor_layout_data: &DescriptorLayoutData,
         uniform_buffers: &[vk::Buffer],
-        texture_image_view: vk::ImageView,
-        texture_sampler: vk::Sampler,
+        textures_data: &[TextureData],
+        default_texture: &TextureData,
+        materials_data: &[Material],
         images_count: usize,
     ) -> Result<Self> {
-        let descriptor_pool = create_descriptor_pool(device, images_count as u32)?;
-        let descriptor_sets = create_descriptor_sets(
+        let materials_count = materials_data.len();
+        info!("materials count: {}", materials_count);
+
+        let descriptor_pool = create_descriptor_pool(
+            device,
+            images_count as u32,
+            materials_count as u32,
+        )?;
+        
+        let global_descriptor_sets = create_global_descriptor_sets(
             device,
             images_count,
-            descriptor_set_layout,
+            descriptor_layout_data.global_set_layout,
             descriptor_pool,
-            uniform_buffers,
-            texture_image_view,
-            texture_sampler
+            uniform_buffers
         )?;
 
-        Ok(Self { descriptor_pool, descriptor_sets })
+        let material_descriptor_sets = create_material_descriptor_sets(
+            device,
+            descriptor_layout_data.material_set_layout,
+            descriptor_pool,
+            materials_data,
+            textures_data,
+            default_texture
+        )?;
+
+        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets })
+    }
+
+    pub fn update_global_descriptor_set(
+        &mut self,
+        device: &Device,
+        uniform_buffers: &[vk::Buffer],
+    ) -> Result<()> {
+        for i in 0..self.global_descriptor_sets.len() {
+            let buffer_info = &[*vk::DescriptorBufferInfo::builder()
+                .buffer(uniform_buffers[i])
+                .offset(0)
+                .range(size_of::<UniformBufferObject>() as u64)];
+
+            let ubo_write = vk::WriteDescriptorSet::builder()
+                .dst_set(self.global_descriptor_sets[i])
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(buffer_info);
+
+            unsafe { device.update_descriptor_sets(&[ubo_write], &[] as &[vk::CopyDescriptorSet]); }
+        }   
+
+        Ok(())
     }
 }
 
@@ -750,13 +842,13 @@ impl CommandData {
     pub fn update_command_buffer(
         &mut self,
         device: &Device,
-        models_data: &ModelsData,
+        models_data: &ModelGraph,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_data: &SwapchainData,
         color_data: &ColorData,
         depth_data: &DepthData,
-        descriptor_sets: &[vk::DescriptorSet],
+        descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
     ) -> Result<()> {
@@ -821,23 +913,26 @@ impl CommandData {
 
         unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
 
-        // TODO: change this to support multiple models
-        let model_data = &models_data.models[0];
+        let mut secondary_command_buffers = Vec::new();
 
-        let secondary_command_buffers = (0..model_data.instances.len())
-            .map(|i| self.update_secondary_command_buffers(
+        for (i, w_node) in models_data.linear_nodes.iter().enumerate() {
+            let Some(ref_node) = w_node.upgrade() else { continue };
+            if ref_node.borrow().mesh.is_none() { continue };
+            
+            let node = ref_node.borrow();
+            secondary_command_buffers.push(self.update_secondary_command_buffers(
                 device,
-                model_data,
+                &node,
                 pipeline_data,
                 buffers_data,
                 &[swapchain_data.swapchain_format],
                 depth_data,
-                descriptor_sets,
+                descriptor_data,
                 msaa_samples,
                 image_index,
                 i,
-            ))
-            .collect::<Result<Vec<_>, _>>()?;
+            )?);
+        }
 
         unsafe { 
             device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
@@ -858,20 +953,20 @@ impl CommandData {
     pub fn update_secondary_command_buffers(
         &mut self,
         device: &Device,
-        model_data: &Model,
+        model_node: &Node,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_formats: &[vk::Format],
         depth_data: &DepthData,
-        descriptor_sets: &[vk::DescriptorSet],
+        descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
-        model_index: usize,
+        node_index: usize,
     ) -> Result<vk::CommandBuffer> {
         self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
 
-        while model_index >= command_buffers.len() {
+        while node_index >= command_buffers.len() {
             let allocate_info = vk::CommandBufferAllocateInfo::builder()
                 .command_pool(self.command_pools[image_index])
                 .level(vk::CommandBufferLevel::SECONDARY)
@@ -881,10 +976,12 @@ impl CommandData {
             command_buffers.push(command_buffer);
         }
 
-        let command_buffer = command_buffers[model_index];
+        let command_buffer = command_buffers[node_index];
 
         // push-constant model matrix
-        let model = model_data.instances[model_index].to_model_matrix();
+        // let model = model_data.instances[model_index].to_model_matrix();
+        let mesh = model_node.mesh.as_ref().unwrap();
+        let model = model_node.get_global_matrix();
 
         let model_bytes = unsafe {
             std::slice::from_raw_parts(
@@ -915,12 +1012,27 @@ impl CommandData {
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers_data.interleaved_buffer], &[0]);
             device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.index_offset, vk::IndexType::UINT32);
             
+            // UBO binding
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_data.pipeline_layout,
                 0,
-                &[descriptor_sets[image_index]],
+                &[descriptor_data.global_descriptor_sets[image_index]],
+                &[]
+            );
+
+            // materials binding
+            let material_descriptor_index = model_node.mesh.as_ref()
+                .map(|mesh| mesh.material_index.max(0) as usize)
+                .unwrap_or(0);
+
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_data.pipeline_layout,
+                1,
+                &[descriptor_data.material_descriptor_sets[material_descriptor_index]],
                 &[]
             );
 
@@ -939,7 +1051,7 @@ impl CommandData {
                 opacity_bytes,
             );
 
-            device.cmd_draw_indexed(command_buffer, model_data.mesh.indices.len() as u32, 1, 0, 0, 0);
+            device.cmd_draw_indexed(command_buffer, mesh.indices.len() as u32, 1, 0, 0, 0);
             device.end_command_buffer(command_buffer)?;
         }
 
@@ -1039,53 +1151,6 @@ impl SyncData {
         self.in_flight_fences.iter().for_each(|f| device.destroy_fence(*f, None)); // also free images_in_flight
         self.render_finished_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
         self.image_available_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TextureData {
-    pub texture_image: vk::Image,
-	pub texture_image_memory: vk::DeviceMemory,
-	pub texture_image_view: vk::ImageView,
-    pub texture_sampler: vk::Sampler,
-    pub mip_levels: u32,
-}
-
-impl TextureData {
-    pub fn create(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        setup_command_buffer: vk::CommandBuffer,
-        graphics_queue: vk::Queue,
-        texture_path: &str,
-    ) -> Result<Self> {
-        let (texture_image, texture_image_memory, mip_levels) = load_texture(
-            instance,
-            device,
-            physical_device,
-            texture_path,
-            setup_command_buffer,
-            graphics_queue
-        )?;
-		let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
-        let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
-
-        Ok(Self {
-            texture_image,
-            texture_image_memory,
-            texture_image_view,
-            texture_sampler,
-            mip_levels
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        device.destroy_sampler(self.texture_sampler, None);
-        device.destroy_image_view(self.texture_image_view, None);
-		device.destroy_image(self.texture_image, None);
-		device.free_memory(self.texture_image_memory, None);
     }
 }
 
