@@ -4,13 +4,14 @@ use std::io::BufReader;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
+use log::*;
 
 use anyhow::{Result, anyhow};
 use cgmath::{One, Quaternion, Zero, vec2, vec3};
 
 use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use png::Decoder;
-use log::*;
+use image;
 
 use gltf::iter;
 use gltf::buffer::Data;
@@ -200,6 +201,103 @@ pub fn load_3d_content(
 // glTF
 //===============================================
 
+/// check if the texture mimetype is ktx2
+fn is_ktx2(image_src: &Source) -> bool {
+    match image_src {
+        Source::View { mime_type, .. } => *mime_type == "image/ktx2",
+        Source::Uri { uri, mime_type } => mime_type.unwrap_or("") == "image/ktx2" || uri.ends_with(".ktx2")
+    }
+}
+
+/// check if the texture mimetype is png or jpeg
+fn is_png_jpeg(image_src: &Source) -> bool {
+    match image_src {
+        Source::View { mime_type, .. } => *mime_type == "image/png" || *mime_type == "image/jpeg",
+        Source::Uri { uri, .. } => uri.ends_with(".png") || uri.ends_with(".jpg") || uri.ends_with(".jpeg"),
+    }
+}
+
+fn load_ktx2_textures(
+    ktx2_data: &[u8],
+    texture_idx: usize,
+) -> Result<(Vec<u8>, vk::Format, vk::Extent3D, u32)> {
+    let ktx_texture = ktx2::Reader::new(&ktx2_data)?;
+    let header = ktx_texture.header();
+
+    let format = header.format
+        .map(|f| vk::Format::from_raw(f.value() as i32))
+        .ok_or_else(|| anyhow!("KTX2 texture {} as no format", texture_idx))?;
+
+    let extent = vk::Extent3D {
+        width: header.pixel_width,
+        height: header.pixel_height,
+        depth: header.pixel_depth.max(1),
+    };
+    let mip_levels = header.level_count;
+
+    let pixel_data = if header.supercompression_scheme == Some(ktx2::SupercompressionScheme::BasisLZ) {
+        // transcode texture
+        let mut transcoder = Transcoder::new();
+
+        if transcoder.prepare_transcoding(&ktx2_data).is_err() {
+            return Err(anyhow!("Failed to prepare transcoding: {}", texture_idx));
+            // continue 'texture;
+        }
+
+        // let transcode_format = TranscoderTextureFormat::BC7_RGBA;
+
+        let mut all_levels_data = Vec::new();
+        for level in 0..mip_levels {
+            let params = TranscodeParameters {
+                image_index: 0,
+                level_index: level as u32,
+                decode_flags: None,
+                output_row_pitch_in_blocks_or_pixels: None,
+                output_rows_in_pixels: None,
+            };
+
+            // TODO: support multiple textures format transcoder in case the gpu doesn't support BC7.
+            match transcoder.transcode_image_level(
+                &ktx2_data,
+                TranscoderTextureFormat::BC7_RGBA,
+                params,
+            ) {
+                Ok(data) => all_levels_data.extend_from_slice(&data),
+                Err(e) => {
+                    return Err(anyhow!("Failed to transcode level {}: {:?}", level, e));
+                    // continue 'texture;
+                }
+            }
+        }
+        all_levels_data
+    } else {
+        // no need for transcoding
+        let mut all_levels_data = Vec::new();
+        for level in ktx_texture.levels() {
+            all_levels_data.extend_from_slice(&level.data);
+        }
+        all_levels_data
+    };
+
+    Ok((pixel_data, format, extent, mip_levels))
+}
+
+fn load_rgba_texture(
+    raw_data: &[u8],
+) -> Result<(Vec<u8>, vk::Format, vk::Extent3D, u32)> {
+    let img = image::load_from_memory(&raw_data)?.to_rgba8();
+    let (w, h) = img.dimensions();
+    let extent = vk::Extent3D { width: w, height: h, depth: 1 };
+    let mip_levels = (w.max(h) as f32).log2().floor() as u32 + 1;
+
+    Ok((
+        img.into_raw(),
+        vk::Format::R8G8B8A8_SRGB,
+        extent,
+        mip_levels,
+    ))
+}
+
 fn load_gltf_textures(
     device: &Device,
     instance: &Instance,
@@ -213,91 +311,47 @@ fn load_gltf_textures(
     'texture: for (i, texture) in textures.enumerate() {
         let image = texture.source();
 
-        // let name = image.name()
-        //     .filter(|n| !n.is_empty())
-        //     .map(|n| n.to_string())
-        //     .unwrap_or_else(|| format!("texture_{}", i));
+        // 1 - Extract raw texture information
+        let image_src = image.source();
+        debug!("Texture source type: {:?}", image_src);
 
-        // 1 - check if the image is embedded as KTX2
-        // TODO: add support for .png texture.
-        debug!("Texture source type: {:?}", image.source());
-        let ktx2_data: Vec<u8> = match image.source() {
-            Source::View { view, mime_type } if mime_type == "image/ktx2" => {
-                    let buffer_data = &buffers[view.buffer().index()];
-                    let start = view.offset();
-                    let end = start + view.length();
-                    buffer_data[start..end].to_vec()
+        let raw_data: Vec<u8> = match image_src {
+            Source::View { ref view, .. } => {
+                let buffer_data = &buffers[view.buffer().index()];
+                let start = view.offset();
+                let end = start + view.length();
+                buffer_data[start..end].to_vec()
             }
-            Source::Uri { uri, mime_type }
-                if mime_type.unwrap_or("") == "image/ktx2" || uri.ends_with(".ktx2") => {
-                    std::fs::read(uri)?
-            }
-            _ => {
-                warn!("Texture {} is not KTX2, skipping", i);
-                continue 'texture;
+            Source::Uri { uri, .. } => {
+                std::fs::read(uri)?
             }
         };
 
-        // 2 - create texture image
-        let ktx_texture = ktx2::Reader::new(&ktx2_data)?;
-        let header = ktx_texture.header();
-
-        let format = header.format
-            .map(|f| vk::Format::from_raw(f.value() as i32))
-            .ok_or_else(|| anyhow!("KTX2 texture {} as no format", i))?;
-
-        let extent = vk::Extent3D {
-            width: header.pixel_width,
-            height: header.pixel_height,
-            depth: header.pixel_depth.max(1),
-        };
-        let mip_levels = header.level_count;
-
-        let pixel_data = if header.supercompression_scheme == Some(ktx2::SupercompressionScheme::BasisLZ) {
-            // transcode texture
-            let mut transcoder = Transcoder::new();
-
-            if transcoder.prepare_transcoding(&ktx2_data).is_err() {
-                warn!("Failed to prepare transcoding: {}", i);
-                continue 'texture;
-            }
-
-            // let transcode_format = TranscoderTextureFormat::BC7_RGBA;
-
-            let mut all_levels_data = Vec::new();
-            for level in 0..mip_levels {
-                let params = TranscodeParameters {
-                    image_index: 0,
-                    level_index: level as u32,
-                    decode_flags: None,
-                    output_row_pitch_in_blocks_or_pixels: None,
-                    output_rows_in_pixels: None,
-                };
-
-                // TODO: support multiple textures format transcoder in case the gpu doesn't support BC7.
-                match transcoder.transcode_image_level(
-                    &ktx2_data,
-                    TranscoderTextureFormat::BC7_RGBA,
-                    params,
-                ) {
-                    Ok(data) => all_levels_data.extend_from_slice(&data),
-                    Err(e) => {
-                        warn!("Failed to transcode level {}: {:?}", level, e);
-                        continue 'texture;
-                    }
+        // 2 - Load texture information
+        let (pixels, format, extent, mip_levels) = if is_ktx2(&image_src) {
+            match load_ktx2_textures(&raw_data, i) {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Could not load ktx2 texture {} > {}\nskipping.", i, e);
+                    continue 'texture;
                 }
             }
-            all_levels_data
-        } else {
-            // no need for transcoding
-            let mut all_levels_data = Vec::new();
-            for level in ktx_texture.levels() {
-                all_levels_data.extend_from_slice(&level.data);
+        }
+        else if is_png_jpeg(&image_src) {
+            match load_rgba_texture(&raw_data) {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Could not load png/jpeg texture {} > {}\nskipping.", i, e);
+                    continue 'texture;
+                }
             }
-            all_levels_data
+        }
+        else {
+            warn!("Texture {} is not KTX2 or JPEG or PNG, skipping", i);
+            continue 'texture;
         };
 
-        // create Vulkan Image, Memory and View
+        // 3 - Create Vulkan Image, Memory and View
         let (texture_image, texture_image_memory) = create_texture_image(
             instance,
             device,
@@ -306,7 +360,7 @@ fn load_gltf_textures(
             graphics_queue,
             extent,
             mip_levels,
-            &pixel_data,
+            &pixels,
             format,
         )?;
         let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;

@@ -281,7 +281,7 @@ pub fn create_uniform_buffers(
 
 /// Re-create a list of uniform buffers and their memories
 /// 
-/// # Arguments
+/// ## Arguments
 /// 
 /// - `instance` ( &[Instance] ) - Vulkan instance.
 /// - `device` ( &[Device] ) - Vulkan device.

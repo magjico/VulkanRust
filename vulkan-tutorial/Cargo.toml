@@ -13,6 +13,7 @@ vulkanalia = { version = "=0.35.0", features = ["libloading", "provisional", "wi
 winit = "0.29.15" # used to create a window to render to
 rand = "0.10.1"
 itertools = "0.14.0"
+exr = "1.74.0"
 
 # i/o dependencies
 tobj = { version = "4.0.3", features = ["log"] } # used to load 3D models in the Wavefront .obj format
@@ -20,3 +21,4 @@ png = "0.18.1"		# used to load PNGs to use as textures
 gltf = "1.4.1"      # used to load glTF obj
 ktx2 = "0.5.0"      # used to load KTX2 compressed texture format
 basis-universal = "0.3.1"
+image = "0.25"      # used to load png, jpec, etc. texture format
