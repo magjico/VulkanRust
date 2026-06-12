@@ -10,7 +10,8 @@ cgmath = "0.18.0"	# used as a Rust replacement for GLM (graphics math library)
 pretty_env_logger = "0.5.0"	# used to print our logs to the console 
 thiserror = "2.0.18"		# used to define custom errors types without boilerplate
 vulkanalia = { version = "=0.35.0", features = ["libloading", "provisional", "window"] } # used to call the Vulkan API
-winit = "0.29.15" # used to create a window to render to
+winit = "0.30.13" # used to create a window to render to
+winit_input_helper = "0.17.0"
 rand = "0.10.1"
 itertools = "0.14.0"
 exr = "1.74.0"
@@ -22,3 +23,7 @@ gltf = "1.4.1"      # used to load glTF obj
 ktx2 = "0.5.0"      # used to load KTX2 compressed texture format
 basis-universal = "0.3.1"
 image = "0.25"      # used to load png, jpec, etc. texture format
+
+# config file parsing
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.1.2+spec-1.1.0"

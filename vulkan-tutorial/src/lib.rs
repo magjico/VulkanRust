@@ -9,3 +9,4 @@ pub mod debug;
 pub mod constants;
 pub mod app;
 pub mod scene;
+pub mod input;

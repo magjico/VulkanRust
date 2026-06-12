@@ -1,21 +1,28 @@
 use anyhow::{Result, anyhow};
 use cgmath::{Deg, vec3, point3};
-
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
 use log::*;
 
-use winit::window::Window;
+use winit::dpi::LogicalSize;
+use winit::application::ApplicationHandler;
+use winit::window::{Window, WindowId};
+use winit::event_loop::ActiveEventLoop;
+use winit::event::{DeviceEvent, WindowEvent, DeviceId, StartCause};
+use winit_input_helper::WinitInputHelper;
+
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
 
-use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, DUCK_PATH, FRAG, MAX_FRAMES_IN_FLIGHT, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
+use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, DUCK_PATH, FRAG, MAX_FRAMES_IN_FLIGHT,
+                        VALIDATION_ENABLED, VALIDATION_LAYER, VERT, INPUT_PATH};
 use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
                     get_max_msaa_samples, create_logical_device, create_global_descriptor_set_layout,
                     create_material_descriptor_set_layout, create_pipeline};
+use crate::input::InputBindings;
 use crate::render::{UniformBufferObject, TextureData, create_color_objects, create_depth_objects,
                     create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
@@ -28,11 +35,136 @@ use crate::setup::{create_descriptor_pool, create_global_descriptor_sets, create
 use crate::math::Mat4;
 
 //===================================================
+// App Manager
+//===================================================
+
+
+/// Manage [App] and [Window] event interaction.
+#[derive(Default)]
+pub struct AppManager {
+    pub window: Option<Window>,
+    pub app: Option<App>,
+    pub input: WinitInputHelper,
+	pub last_frame_time: Option<Instant>,
+}
+
+
+impl ApplicationHandler for AppManager {
+    fn window_event(
+        &mut self,
+        elwt: &ActiveEventLoop,
+        _: WindowId,
+        event: WindowEvent,
+    ) {
+        if self.input.process_window_event(&event) {
+            let Some(window) = self.window.as_mut() else { return };
+            let Some(app) = self.app.as_mut() else { return };
+
+            match event {
+                WindowEvent::RedrawRequested if !window.is_minimized().unwrap() && !elwt.exiting() => {
+                    app.render(&window).unwrap();
+                }
+                WindowEvent::Resized(size) => if size.width != 0 && size.height != 0 {
+                    app.resized = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _: &ActiveEventLoop,
+        _: DeviceId,
+        event: DeviceEvent,
+    ) {
+        self.input.process_device_event(&event);
+    }
+
+    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
+        self.input.step();
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.input.end_step();
+
+        if self.input.close_requested() || self.input.destroyed() {
+            if let Some(app) = self.app.as_mut() {
+                unsafe { app.destroy() }; 
+            }
+            event_loop.exit();
+            return;
+        }
+
+		if let Some(app) = self.app.as_mut() {
+			let now = Instant::now();
+			let delta_time = self.last_frame_time
+				.map(|t| now.duration_since(t).as_secs_f32())
+				.unwrap_or(0.0);
+			self.last_frame_time = Some(now);
+
+			for (keycode, action) in &app.input_binding.camera_bindings {
+				if self.input.key_held(*keycode) {
+					// app.camera.process_keyboard(*action, delta_time);
+				}
+			}
+		} 
+
+        if let Some(window) = self.window.as_mut() {
+            window.request_redraw();
+        }
+    }
+
+	// /// Handle discrete directional input from keyboards,
+	// /// translating key presses into action.
+	// pub fn handle_event(&mut self, event: &Event<()>) {
+	// 	match event {
+	// 		Event::WindowEvent { event, .. } => match event {
+	// 			WindowEvent::MouseInput { state, button, .. } => {
+	// 				todo!();
+	// 			}
+	// 			WindowEvent::KeyboardInput { event, .. } => {
+	// 				if let PhysicalKey::Code(keycode) = event.physical_key {
+	// 					if let Some(&action) = self.input_binding.camera_bindings.get(&keycode) {
+
+	// 					}
+	// 				}
+	// 				todo!();
+	// 			}
+	// 			WindowEvent::MouseWheel { delta, .. } => {
+	// 				todo!();
+	// 			}
+	// 			_ => {}
+	// 		}
+	// 		Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
+	// 			todo!();
+	// 		}
+	// 		_ => {}
+	// 	}
+	// }
+    
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            let window =
+                event_loop.create_window(
+                    Window::default_attributes()
+                        .with_title("Vulkan App")
+                        .with_inner_size(LogicalSize::new(1024, 768))   
+                ).unwrap();
+            
+            self.app = Some(App::create(&window).unwrap());
+			self.last_frame_time = Some(Instant::now());
+            self.window = Some(window);
+        }
+    }
+}
+
+//===================================================
 // App
 //===================================================
 
 /// Vulkan app.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct App {
     pub entry: Entry,
     pub instance: Instance,
@@ -42,6 +174,7 @@ pub struct App {
     pub resized: bool,
     pub start: Instant,
     pub models: usize,
+    pub input_binding: InputBindings,
 }
 
 impl App {
@@ -224,6 +357,12 @@ impl App {
             default_texture
         };
 
+        // IV - inputs
+        // TODO: make InputBindings able to have None so we can have a default if we can't parse.
+		debug!("loading input config");
+        let input_binding = InputBindings::bind_from_file(&INPUT_PATH)?;
+		debug!("input config loaded");
+
         Ok( Self {
             entry,
             instance,
@@ -232,7 +371,8 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
-            models: 1
+            models: 1,
+            input_binding,
         })
     }
 

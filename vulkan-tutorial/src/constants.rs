@@ -48,7 +48,7 @@ pub const VERT: &[u8] = include_bytes!("../shaders/hello_model/vert.spv");
 pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
 
 //==================================
-// Assets Paths
+// Paths
 //==================================
 
 // 1 - Viking room
@@ -60,3 +60,6 @@ pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
 // 2 - glb Duck 
 /// Duck path
 pub const DUCK_PATH: &str = "resources/glb/Duck.glb";
+
+// 3 - Inputs
+pub const INPUT_PATH: &str = "config/input.toml";
