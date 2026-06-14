@@ -29,7 +29,7 @@ use crate::resources::{create_command_pool, create_command_pools, create_setup_c
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
 use crate::assets::{load_gltf_model};
-use crate::scene::{Material, ModelGraph, Node};
+use crate::scene::{Camera, CameraBuilder, Material, ModelGraph, Node};
 use crate::setup::{create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets,
                     create_sync_objects, create_default_texture};
 use crate::math::Mat4;
@@ -105,7 +105,7 @@ impl ApplicationHandler for AppManager {
 
 			for (keycode, action) in &app.input_binding.camera_bindings {
 				if self.input.key_held(*keycode) {
-					// app.camera.process_keyboard(*action, delta_time);
+					app.data.camera_data.process_keyboard(*action, delta_time);
 				}
 			}
 		} 
@@ -339,6 +339,11 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
 
+        // 13. Camera
+        // TODO: support multiple cameras
+        let camera = CameraBuilder::new()
+            .builder();
+
         let data = AppData {
             surface,
             device_data,
@@ -353,6 +358,7 @@ impl App {
             textures_data,
             depth_data,
             color_data,
+            camera_data: camera,
             messenger,
             default_texture
         };
@@ -647,6 +653,8 @@ pub struct AppData {
     pub depth_data: DepthData,
 	// Render target (now only use for MSAA)
 	pub color_data: ColorData,
+    // Camera
+    pub camera_data: Camera,
     // Debug
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
 

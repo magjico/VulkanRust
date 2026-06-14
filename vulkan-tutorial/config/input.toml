@@ -1,7 +1,7 @@
 [camera_control]
-forward = "z"
+forward = "w"
 backward = "s"
-left = "q"
+left = "a"
 right = "d"
 up = "space"
 down = "ctrl_left"

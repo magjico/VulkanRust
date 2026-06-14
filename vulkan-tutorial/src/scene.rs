@@ -22,3 +22,4 @@ pub use animation::PathType;
 
 pub use camera::CameraMovement;
 pub use camera::Camera;
+pub use camera::CameraBuilder;

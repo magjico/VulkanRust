@@ -1,3 +1,7 @@
+use cgmath::InnerSpace;
+
+use log::*;
+
 use crate::math::*;
 
 
@@ -34,12 +38,12 @@ pub enum CameraMovement {
 /// - `up` ([`Vec3`]) - Camera's local up direction (for roll control).
 /// - `right` ([`Vec3`]) - Camera's local right direction (perpendicular to front and up).
 /// - `world_up` ([`Vec3`]) - Global up vector reference (typically Y-axis).
-/// - `yaw` (`f32`) - Horizontal rotation around the world up-axis (left-right looking).
-/// - `pitch` (`f32`) - Vertical rotation around the camera's right axis (up-down looking).
+/// - `yaw` (`f32`) - Horizontal rotation in **degree** around the world up-axis (left-right looking).
+/// - `pitch` (`f32`) - Vertical rotation in **degree** around the camera's right axis (up-down looking).
 /// - `movement_speed` (`f32`) - Units per second for translation movement.
 /// - `mouse_sensitivity` (`f32`) - Multiplier for mouse input to rotation angle conversion.
 /// - `zoom` (`f32`) - Field of view control for perspective projection.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Camera {
     // Spatial-positioning and orientation
     position: Vec3,
@@ -48,7 +52,7 @@ pub struct Camera {
     right: Vec3,
     world_up: Vec3,
 
-    // Rotation representation using Euler angles.
+    // Rotation representation using Euler angles (store in degrees).
     // Provides intuitive control while managing gimbal lock and other rotation complexities.
     yaw: f32,
     pitch: f32,
@@ -61,19 +65,54 @@ pub struct Camera {
 }
 
 impl Camera {
+    pub fn new(
+        position: Vec3,
+        up: Vec3,
+        yaw: f32,
+        pitch: f32,
+        movement_speed: f32,
+        mouse_sensitivity: f32,
+        zoom: f32,
+    ) -> Self {
+        let world_up = up;
+
+        let front = Vec3::new(
+            yaw.to_radians().cos() * pitch.to_radians().cos(),
+            pitch.to_radians().sin(),
+            yaw.to_radians().sin() * pitch.to_radians().sin()
+        ).normalize();
+        let right = front.cross(world_up).normalize();
+        let up = right.cross(front).normalize();
+
+        Self {
+            position,
+            front,
+            up,
+            right,
+            world_up,
+            yaw,
+            pitch,
+            movement_speed,
+            mouse_sensitivity,
+            zoom
+        }
+    }
+
     /// Internal coordinate system maintenance.
-    /// Ensures mathematical consistency when orientation changes occur
-    /// TODO
-    fn update_camera_vectors() {}
+    /// Ensures mathematical consistency when orientation changes occurs.
+    fn update_camera_vectors(&mut self) {
+        // Calculate the new front vector
+        let new_front = Vec3::new(
+            self.yaw.to_radians().cos() * self.pitch.to_radians().cos(),
+            self.pitch.to_radians().sin(),
+            self.yaw.to_radians().sin() * self.pitch.to_radians().sin()
+        );
+        self.front = new_front.normalize();
 
-    // pub fn create(
-    //     position: Vec3,
-    //     up: Vec3,
-    //     yaw: f32,
-    //     pitch: f32
-    // ) -> Self {
-
-    // }
+        // Re-calculate the right and up vectors
+        self.right = self.front.cross(self.world_up).normalize();
+        self.up = self.right.cross(self.front).normalize();
+    }
 
     // pub fn get_view_matrix(&self) -> Mat4 {
 
@@ -95,6 +134,7 @@ impl Camera {
         dir: CameraMovement,
         delta_time: f32,
     ) {
+        debug!("processing keyboard: {:?}", dir);
         let velocity = self.movement_speed * delta_time;
 
         match dir {
@@ -108,12 +148,23 @@ impl Camera {
     }
 
     pub fn process_mouse_movement(
-        &self,
+        &mut self,
         x_offset: f32,
         y_offset: f32,
         constrain_pitch: Option<bool>
     ) {
         let constrain_pitch = constrain_pitch.unwrap_or(true);
+        let x_offset = x_offset * self.mouse_sensitivity;
+        let y_offset = y_offset * self.mouse_sensitivity;
+
+        self.yaw += x_offset;
+        self.pitch += y_offset;
+
+        if constrain_pitch {
+            self.pitch = self.pitch.clamp(-89.0, 89.0);
+        }
+
+        self.update_camera_vectors();
     }
 
     pub fn process_mouse_scroll(&self, y_offset: f32) {
@@ -123,4 +174,89 @@ impl Camera {
     pub fn get_position(&self) -> Vec3 { self.position }
     pub fn get_front(&self) -> Vec3 { self.front }
     pub fn get_zoom(&self) -> f32 { self.zoom }
+}
+
+
+pub struct CameraBuilder {
+    // Spatial-positioning and orientation
+    position: Vec3,
+    world_up: Vec3,
+
+    // Rotation representation using Euler angles (store in degrees).
+    // Provides intuitive control while managing gimbal lock and other rotation complexities.
+    yaw: f32,
+    pitch: f32,
+
+    // User interaction and behavior parameters
+    // These control how the camera responds to input and environmental factors
+    movement_speed: f32,
+    mouse_sensitivity: f32,
+    zoom: f32,
+}
+
+impl Default for CameraBuilder {
+    fn default() -> Self {
+        Self {
+            position:				Vec3::new(0.0, 0.0, 0.0),
+            world_up:				Vec3::new(0.0, 1.0, 0.0),
+            yaw:					-90.0,
+            pitch:					0.0,
+            movement_speed:			2.5,
+            mouse_sensitivity:		0.1,
+            zoom:					45.0,
+        }
+    }
+}
+
+impl CameraBuilder {
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	pub fn position(mut self, position: Vec3) -> Self {
+		self.position = position;
+		self
+	}
+
+	pub fn world_up(mut self, world_up: Vec3) -> Self {
+		self.world_up = world_up;
+		self
+	}
+
+	pub fn yaw(mut self, yaw: f32) -> Self {
+		self.yaw = yaw;
+		self
+	}
+
+	pub fn pitch(mut self, pitch: f32) -> Self {
+		self.pitch = pitch;
+		self
+	}
+
+	pub fn movement_speed(mut self, movement_speed: f32) -> Self {
+		self.movement_speed = movement_speed;
+		self
+	}
+
+	pub fn mouse_sensitivity(mut self, mouse_sensitivity: f32) -> Self {
+		self.mouse_sensitivity = mouse_sensitivity;
+		self
+	}
+
+	pub fn zoom(mut self, zoom: f32) -> Self {
+		self.zoom = zoom;
+		self
+	}
+
+	pub fn builder(self) -> Camera {
+		Camera::new(
+			self.position,
+			self.world_up,
+			self.yaw,
+			self.pitch,
+			self.movement_speed,
+			self.mouse_sensitivity,
+			self.zoom
+		)
+	}
 }

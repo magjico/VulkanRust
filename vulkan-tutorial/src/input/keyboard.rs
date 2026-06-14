@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use anyhow::{anyhow, Result};
 
+use log::*;
+
 use serde::Deserialize;
 use winit::keyboard::KeyCode;
 
@@ -39,6 +41,7 @@ impl InputBindings {
         camera_bindings.insert(InputBindings::parse_keycode(&toml.camera_control.right)?, CameraMovement::Right);
         camera_bindings.insert(InputBindings::parse_keycode(&toml.camera_control.up)?, CameraMovement::Up);
         camera_bindings.insert(InputBindings::parse_keycode(&toml.camera_control.down)?, CameraMovement::Down);
+        debug!("camera bindings: {:?}", camera_bindings);
 
         Ok(Self {
             camera_bindings,
