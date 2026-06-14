@@ -108,6 +108,17 @@ impl ApplicationHandler for AppManager {
 					app.data.camera_data.process_keyboard(*action, delta_time);
 				}
 			}
+
+            // TODO: change this to adapt to the type of camera & app
+            if self.input.mouse_held(winit::event::MouseButton::Right) {
+                let (dx, dy) = self.input.mouse_diff();
+                app.data.camera_data.process_mouse_movement(dx, dy, Some((-89.0, 89.0)));
+            }
+
+            let zoom = self.input.scroll_diff().1;
+            if zoom != 0.0 {
+                app.data.camera_data.process_mouse_scroll(zoom);
+            }
 		} 
 
         if let Some(window) = self.window.as_mut() {
@@ -342,7 +353,7 @@ impl App {
         // 13. Camera
         // TODO: support multiple cameras
         let camera = CameraBuilder::new()
-            .builder();
+            .build();
 
         let data = AppData {
             surface,
@@ -365,9 +376,7 @@ impl App {
 
         // IV - inputs
         // TODO: make InputBindings able to have None so we can have a default if we can't parse.
-		debug!("loading input config");
         let input_binding = InputBindings::bind_from_file(&INPUT_PATH)?;
-		debug!("input config loaded");
 
         Ok( Self {
             entry,

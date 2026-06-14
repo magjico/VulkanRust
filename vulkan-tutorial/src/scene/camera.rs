@@ -151,29 +151,33 @@ impl Camera {
         &mut self,
         x_offset: f32,
         y_offset: f32,
-        constrain_pitch: Option<bool>
+        constrain_pitch: Option<(f32, f32)>,
     ) {
-        let constrain_pitch = constrain_pitch.unwrap_or(true);
+		debug!("processing mouse movement: {:?}", (x_offset, y_offset));
         let x_offset = x_offset * self.mouse_sensitivity;
         let y_offset = y_offset * self.mouse_sensitivity;
 
         self.yaw += x_offset;
         self.pitch += y_offset;
 
-        if constrain_pitch {
-            self.pitch = self.pitch.clamp(-89.0, 89.0);
+        if let Some((constrain_min, constrain_max)) = constrain_pitch {
+            self.pitch = self.pitch.clamp(constrain_min, constrain_max);
         }
 
         self.update_camera_vectors();
     }
 
-    pub fn process_mouse_scroll(&self, y_offset: f32) {
-
+    pub fn process_mouse_scroll(&mut self, y_offset: f32) {
+		debug!("processing scroll: {}", y_offset);
+		self.zoom += y_offset;
+		self.zoom = self.zoom.clamp(1.0, 100.0);
     }
 
     pub fn get_position(&self) -> Vec3 { self.position }
     pub fn get_front(&self) -> Vec3 { self.front }
     pub fn get_zoom(&self) -> f32 { self.zoom }
+
+	pub fn builder() -> CameraBuilder { CameraBuilder::new() }
 }
 
 
@@ -248,7 +252,7 @@ impl CameraBuilder {
 		self
 	}
 
-	pub fn builder(self) -> Camera {
+	pub fn build(self) -> Camera {
 		Camera::new(
 			self.position,
 			self.world_up,
