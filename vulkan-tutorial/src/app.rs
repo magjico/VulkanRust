@@ -32,7 +32,7 @@ use crate::assets::{load_gltf_model};
 use crate::scene::{Camera, CameraBuilder, Material, ModelGraph, Node};
 use crate::setup::{create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets,
                     create_sync_objects, create_default_texture};
-use crate::math::Mat4;
+use crate::math::{Mat4, Vec3};
 
 //===================================================
 // App Manager
@@ -352,8 +352,13 @@ impl App {
 
         // 13. Camera
         // TODO: support multiple cameras
-        let camera = CameraBuilder::new()
+        let mut camera = CameraBuilder::new()
+            .position(Vec3::new(0.0, 0.0, 500.0))
+            .movement_speed(30.0)
+            .mouse_sensitivity(0.02)
             .build();
+
+        camera.look_at(Vec3::new(0.0, 0.0, 0.0), None);
 
         let data = AppData {
             surface,
@@ -488,16 +493,6 @@ impl App {
             self.data.swapchain_data.swapchain_images.len()
         )?;
 
-        // self.data.descriptor_data = DescriptorData::create(
-        //     &self.device,
-        //     &self.data.descriptor_layout_data,
-        //     &self.data.buffers_data.uniform_buffers,
-        //     &self.data.textures_data,
-        //     &self.data.default_texture,
-        //     &self.data.models_data.materials,
-        //     self.data.swapchain_data.swapchain_images.len()
-        // )?;
-
         self.data.descriptor_data.update_global_descriptor_set(
             &self.device,
             &self.data.buffers_data.uniform_buffers
@@ -598,17 +593,20 @@ impl App {
     }
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        let view = Mat4::look_at_rh(
-            point3(0.0, 0.0, 500.0),
-            point3(0.0, 0.0, 0.0),
-            vec3(0.0, 1.0, 0.0)
+        debug!("camera info:\n- position: {:?}\n- front: {:?}\n- right {:?}\n- up: {:?}\n- zoom: {:?}°",
+            self.data.camera_data.get_position(),
+            self.data.camera_data.get_front(),
+            self.data.camera_data.get_right(),
+            self.data.camera_data.get_up(),
+            self.data.camera_data.get_zoom()
         );
 
-        let proj = CORRECTION * cgmath::perspective(
-            Deg(45.0),
+        let view = self.data.camera_data.get_view_matrix();
+
+        let proj = CORRECTION * self.data.camera_data.get_projection_matrix(
             self.data.swapchain_data.swapchain_extent.width as f32 / self.data.swapchain_data.swapchain_extent.height as f32,
-            0.1,
-            1000.0
+            Some(0.1),
+            Some(1000.0)
         );
 
         let ubo = UniformBufferObject { view, proj };

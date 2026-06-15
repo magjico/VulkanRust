@@ -1,4 +1,4 @@
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Point3, perspective, Deg};
 
 use log::*;
 
@@ -79,7 +79,7 @@ impl Camera {
         let front = Vec3::new(
             yaw.to_radians().cos() * pitch.to_radians().cos(),
             pitch.to_radians().sin(),
-            yaw.to_radians().sin() * pitch.to_radians().sin()
+            yaw.to_radians().sin() * pitch.to_radians().cos()
         ).normalize();
         let right = front.cross(world_up).normalize();
         let up = right.cross(front).normalize();
@@ -105,7 +105,7 @@ impl Camera {
         let new_front = Vec3::new(
             self.yaw.to_radians().cos() * self.pitch.to_radians().cos(),
             self.pitch.to_radians().sin(),
-            self.yaw.to_radians().sin() * self.pitch.to_radians().sin()
+            self.yaw.to_radians().sin() * self.pitch.to_radians().cos()
         );
         self.front = new_front.normalize();
 
@@ -114,27 +114,39 @@ impl Camera {
         self.up = self.right.cross(self.front).normalize();
     }
 
-    // pub fn get_view_matrix(&self) -> Mat4 {
+    pub fn get_view_matrix(&self) -> Mat4 {
+        let center = Point3::new(self.position.x + self.front.x, self.position.y + self.front.y, self.position.z + self.front.z);
 
-    // }
+        Mat4::look_at_rh(
+            Point3::new(self.position.x, self.position.y, self.position.z),
+            center,
+            self.up
+        )
+    }
 
-    // pub fn get_projection_matrix(
-    //     &self,
-    //     aspect_ratio: f32,
-    //     near_plane: Option<f32>,
-    //     far_plane: Option<f32>
-    // ) -> Mat4 {
-    //     let near_plane = near_plane.unwrap_or(0.1);
-    //     let far_plane = far_plane.unwrap_or(100.0);
+    pub fn get_projection_matrix(
+        &self,
+        aspect_ratio: f32,
+        near_plane: Option<f32>,
+        far_plane: Option<f32>
+    ) -> Mat4 {
+        let near_plane = near_plane.unwrap_or(0.1);
+        let far_plane = far_plane.unwrap_or(100.0);
 
-    // }
+        perspective(
+            Deg(self.zoom),
+            aspect_ratio,
+            near_plane,
+            far_plane
+        )
+
+    }
 
     pub fn process_keyboard(
         &mut self,
         dir: CameraMovement,
         delta_time: f32,
     ) {
-        debug!("processing keyboard: {:?}", dir);
         let velocity = self.movement_speed * delta_time;
 
         match dir {
@@ -153,7 +165,6 @@ impl Camera {
         y_offset: f32,
         constrain_pitch: Option<(f32, f32)>,
     ) {
-		debug!("processing mouse movement: {:?}", (x_offset, y_offset));
         let x_offset = x_offset * self.mouse_sensitivity;
         let y_offset = y_offset * self.mouse_sensitivity;
 
@@ -168,16 +179,39 @@ impl Camera {
     }
 
     pub fn process_mouse_scroll(&mut self, y_offset: f32) {
-		debug!("processing scroll: {}", y_offset);
-		self.zoom += y_offset;
+		self.zoom -= y_offset;
 		self.zoom = self.zoom.clamp(1.0, 100.0);
     }
 
     pub fn get_position(&self) -> Vec3 { self.position }
     pub fn get_front(&self) -> Vec3 { self.front }
+    pub fn get_right(&self) -> Vec3 { self.right }
+    pub fn get_up(&self) -> Vec3 { self.up }
     pub fn get_zoom(&self) -> f32 { self.zoom }
 
 	pub fn builder() -> CameraBuilder { CameraBuilder::new() }
+
+    // command control
+    pub fn goto(&mut self, new_position: Vec3) {
+        self.position = new_position;
+    }
+
+    pub fn look_at(&mut self, target: Vec3, constrain_pitch: Option<(f32, f32)>) {
+        let diff = target - self.position;
+        if diff.magnitude2() < 1e-6 {
+            return;
+        }
+        let dir = diff.normalize();
+        
+
+        self.yaw = dir.z.atan2(dir.x).to_degrees();
+        self.pitch = dir.y.asin().to_degrees();
+        if let Some((constrain_min, constrain_max)) = constrain_pitch {
+            self.pitch = self.pitch.clamp(constrain_min, constrain_max);
+        }
+
+        self.update_camera_vectors();
+    }
 }
 
 
