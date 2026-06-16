@@ -3,7 +3,7 @@ Cargo.lock
 target/
 
 # Docs
-docs/graphic_computing_help/*
+docs/graphic_computing_help/
 
 # Binary
 *.spv
@@ -12,8 +12,7 @@ docs/graphic_computing_help/*
 *.glb
 *.gltf
 
-# Texture
-vulkan-tutorial/resources/textures/*
-
-# 3D meshes
-vulkan-tutorial/resources/3D_meshes/*
+# 3D
+vulkan-tutorial/resources/textures/
+vulkan-tutorial/resources/3D_meshes/
+vulkan-tutorial/resources/glb/

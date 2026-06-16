@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::collections::HashMap;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 use log::*;
 
@@ -298,6 +299,7 @@ fn load_gltf_textures(
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
     buffers: &[Data],
+    base_dir: &Path
 ) -> Result<Vec<TextureData>> {
     let mut vk_textures = Vec::new();
     'texture: for (i, texture) in textures.enumerate() {
@@ -315,7 +317,9 @@ fn load_gltf_textures(
                 buffer_data[start..end].to_vec()
             }
             Source::Uri { uri, .. } => {
-                std::fs::read(uri)?
+                let file_path =  base_dir.join(uri);
+                std::fs::read(&file_path)
+                    .map_err(|e| anyhow!("Failed to read {}: {}", file_path.display(), e))?
             }
         };
 
@@ -533,6 +537,8 @@ pub fn load_gltf_model(
 ) -> Result<(ModelGraph, Vec<TextureData>)> {
     // warn: this method does not support reading gltf / glb from web.
     let (document, buffers, _) = gltf::import(path)?;
+    let base_dir = std::path::Path::new(path).parent()
+        .ok_or_else(|| anyhow!("Invalid path"))?;
 
     // 1 - load textures
     let textures = load_gltf_textures(
@@ -542,7 +548,8 @@ pub fn load_gltf_model(
         document.textures(),
         setup_command_buffer,
         graphics_queue,
-        &buffers
+        &buffers,
+        base_dir
     )?;
 
     // 2 - load materials

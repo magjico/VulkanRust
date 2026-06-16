@@ -57,9 +57,11 @@ pub const TEXTURE_PATH: &str = "resources/textures/viking_room.png";
 /// The obj test path
 pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
 
-// 2 - glb Duck 
+// 2 - glb 
 /// Duck path
 pub const DUCK_PATH: &str = "resources/glb/Duck.glb";
+/// Flying helmet
+pub const FLIGHT_HELM_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf";
 
 // 3 - Inputs
 pub const INPUT_PATH: &str = "config/input.toml";

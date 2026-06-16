@@ -1,7 +1,5 @@
 use cgmath::{InnerSpace, Point3, perspective, Deg};
 
-use log::*;
-
 use crate::math::*;
 
 
@@ -189,9 +187,10 @@ impl Camera {
     pub fn get_up(&self) -> Vec3 { self.up }
     pub fn get_zoom(&self) -> f32 { self.zoom }
 
-	pub fn builder() -> CameraBuilder { CameraBuilder::new() }
-
     // command control
+    pub fn set_movement_speed(&mut self, movement_speed: f32) { self.movement_speed = movement_speed; }
+    pub fn set_sensitivity(&mut self, mouse_sensitivity: f32) { self.mouse_sensitivity = mouse_sensitivity; }
+
     pub fn goto(&mut self, new_position: Vec3) {
         self.position = new_position;
     }
@@ -212,6 +211,9 @@ impl Camera {
 
         self.update_camera_vectors();
     }
+
+    // utils
+    pub fn builder() -> CameraBuilder { CameraBuilder::new() }
 }
 
 

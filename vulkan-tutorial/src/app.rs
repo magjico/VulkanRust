@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, vec3, point3};
+use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
@@ -17,8 +17,7 @@ use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
 
-use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, DUCK_PATH, FRAG, MAX_FRAMES_IN_FLIGHT,
-                        VALIDATION_ENABLED, VALIDATION_LAYER, VERT, INPUT_PATH};
+use crate::constants::*;
 use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
                     get_max_msaa_samples, create_logical_device, create_global_descriptor_set_layout,
                     create_material_descriptor_set_layout, create_pipeline};
@@ -125,34 +124,6 @@ impl ApplicationHandler for AppManager {
             window.request_redraw();
         }
     }
-
-	// /// Handle discrete directional input from keyboards,
-	// /// translating key presses into action.
-	// pub fn handle_event(&mut self, event: &Event<()>) {
-	// 	match event {
-	// 		Event::WindowEvent { event, .. } => match event {
-	// 			WindowEvent::MouseInput { state, button, .. } => {
-	// 				todo!();
-	// 			}
-	// 			WindowEvent::KeyboardInput { event, .. } => {
-	// 				if let PhysicalKey::Code(keycode) = event.physical_key {
-	// 					if let Some(&action) = self.input_binding.camera_bindings.get(&keycode) {
-
-	// 					}
-	// 				}
-	// 				todo!();
-	// 			}
-	// 			WindowEvent::MouseWheel { delta, .. } => {
-	// 				todo!();
-	// 			}
-	// 			_ => {}
-	// 		}
-	// 		Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
-	// 			todo!();
-	// 		}
-	// 		_ => {}
-	// 	}
-	// }
     
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
@@ -298,17 +269,17 @@ impl App {
         )?;
         
         // load .glb model
-        let (duck_model, duck_textures) = load_gltf_model(
+        let (helm_model, helm_textures) = load_gltf_model(
             &device,
             &instance,
             physical_device,
-            DUCK_PATH,
+            FLIGHT_HELM_PATH,
             command_data.setup_command_buffer,
             graphics_queue
         )?;
 
         // 8. texture
-        let textures_data = duck_textures;
+        let textures_data = helm_textures;
 
         let default_texture = create_default_texture(
             &instance,
@@ -319,7 +290,7 @@ impl App {
         )?;
 
         // 9. model
-        let models_data= duck_model;
+        let models_data = helm_model;
 
         // 10. buffers
         let buffers_data = BuffersData::create(
@@ -353,7 +324,6 @@ impl App {
         // 13. Camera
         // TODO: support multiple cameras
         let mut camera = CameraBuilder::new()
-            .position(Vec3::new(0.0, 0.0, 500.0))
             .movement_speed(30.0)
             .mouse_sensitivity(0.02)
             .build();
@@ -793,7 +763,8 @@ impl PipelineData {
 pub struct BuffersData {
     pub interleaved_buffer: vk::Buffer,
     pub interleaved_buffer_memory: vk::DeviceMemory,
-    pub index_offset: u64,
+    pub interleaved_offset: u64,
+    pub mesh_offsets: HashMap<usize, (u32, u32)>, // key: node idx -> value: (vert_offset, index_offset) 
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
 }
@@ -810,12 +781,15 @@ impl BuffersData {
     ) -> Result<Self> {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
+        let mut mesh_offsets = HashMap::new();
 
-        for w_node in &models_data.linear_nodes {
+        for (i, w_node) in models_data.linear_nodes.iter().enumerate() {
             if let Some(ref_node) = w_node.upgrade() {
                 match ref_node.try_borrow() {
                     Ok(node) => {
                         if let Some(mesh) = &node.mesh {
+                            mesh_offsets.insert(i, (vertices.len() as u32, indices.len() as u32));
+
                             vertices.extend_from_slice(&mesh.vertices);
                             indices.extend_from_slice(&mesh.indices);
                         }
@@ -828,7 +802,7 @@ impl BuffersData {
             }
         }
 
-        let (interleaved_buffer, interleaved_buffer_memory, index_offset) = create_interleaved_buffer(
+        let (interleaved_buffer, interleaved_buffer_memory, interleaved_offset) = create_interleaved_buffer(
             instance,
             device,
             physical_device,
@@ -848,7 +822,8 @@ impl BuffersData {
         Ok(Self {
             interleaved_buffer,
             interleaved_buffer_memory,
-            index_offset,
+            interleaved_offset,
+            mesh_offsets,
             uniform_buffers,
             uniform_buffers_memory,
         })
@@ -1165,7 +1140,7 @@ impl CommandData {
 
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_data.pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers_data.interleaved_buffer], &[0]);
-            device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.index_offset, vk::IndexType::UINT32);
+            device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.interleaved_offset, vk::IndexType::UINT32);
             
             // UBO binding
             device.cmd_bind_descriptor_sets(
@@ -1206,7 +1181,18 @@ impl CommandData {
                 opacity_bytes,
             );
 
-            device.cmd_draw_indexed(command_buffer, mesh.indices.len() as u32, 1, 0, 0, 0);
+            let (vertex_offset, first_index) = buffers_data.mesh_offsets.get(&node_index)
+                .copied()
+                .unwrap_or_default();
+
+            device.cmd_draw_indexed(
+                command_buffer,
+                mesh.indices.len() as u32,
+                1,
+                first_index,
+                vertex_offset as i32,
+                0
+            );
             device.end_command_buffer(command_buffer)?;
         }
 
