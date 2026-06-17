@@ -123,7 +123,7 @@ impl ModelGraph {
             .and_then(|weak_ref| weak_ref.upgrade())
     }
 
-    pub fn update_function(&mut self, index: usize, delta_time: f32) -> Result<()> {
+    pub fn update_animation(&mut self, index: usize, delta_time: f32) -> Result<()> {
         if self.animations.is_empty() || index >= self.animations.len() {
             return Err(anyhow!("Invalid animation requested (empty animation list or ask for an animation index > animations lenght)"));
         }
@@ -131,17 +131,20 @@ impl ModelGraph {
         let animation = &mut self.animations[index];
 
         animation.current_time += delta_time;
-        if animation.current_time > animation.end {
-            animation.current_time = animation.start;
+        while animation.current_time >= animation.end {
+            animation.current_time -= animation.end - animation.start;
         }
 
         animation.channels.iter()
-            .for_each(|channel| {
+            .try_for_each(|channel| {
+                if channel.sampler_index >= animation.samplers.len() {
+                    return Err(anyhow!("channel sampler index {} >= animation samplers size {}", channel.sampler_index, animation.samplers.len()));
+                }
                 let sampler = &animation.samplers[channel.sampler_index];
 
                 let keyframe_it = sampler.inputs.partition_point(|&probe_time|
-                    probe_time <= animation.current_time);
-                
+                    probe_time < animation.current_time);
+
                 if keyframe_it < sampler.inputs.len() && keyframe_it > 0 {
                     let i = keyframe_it - 1;
 
@@ -174,8 +177,21 @@ impl ModelGraph {
                         }
                     }
                 }
-            });
+                else {
+                    warn!("channel.node.upgrade() failed — node was dropped!");
+                }
+                Ok(())
+            })?;
 
         Ok(())
+    }
+
+    pub fn update_animations(&mut self, delta_time: f32) {
+        for i in 0..self.animations.len() {
+            debug!("animation {} current time: {}", i, self.animations[i].current_time);
+            if let Err(e) = self.update_animation(i, delta_time) {
+                warn!("Animation update failed: {}", e);
+            }
+        }
     }
 }

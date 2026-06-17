@@ -454,9 +454,9 @@ fn load_gltf_animations(
                     outputs_vec3 = output_data
                         .chunks(12)
                         .map(|chunk| Vec3::new(
-                            f32::from_be_bytes(chunk[0..4].try_into().unwrap()),
-                            f32::from_be_bytes(chunk[4..8].try_into().unwrap()),
-                            f32::from_be_bytes(chunk[8..12].try_into().unwrap())
+                            f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+                            f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+                            f32::from_le_bytes(chunk[8..12].try_into().unwrap())
                         ))
                         .collect();
                     outputs_vec4 = Vec::new();
@@ -466,10 +466,10 @@ fn load_gltf_animations(
                     outputs_vec4 = output_data
                         .chunks(16)
                         .map(|chunk| Vec4::new(
-                            f32::from_be_bytes(chunk[0..4].try_into().unwrap()),
-                            f32::from_be_bytes(chunk[4..8].try_into().unwrap()),
-                            f32::from_be_bytes(chunk[8..12].try_into().unwrap()),
-                            f32::from_be_bytes(chunk[12..16].try_into().unwrap())
+                            f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+                            f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+                            f32::from_le_bytes(chunk[8..12].try_into().unwrap()),
+                            f32::from_le_bytes(chunk[12..16].try_into().unwrap())
                         ))
                         .collect();
                 }
@@ -513,6 +513,8 @@ fn load_gltf_animations(
             (start.min(s_start), end.max(s_end))
         });
 
+        // debug!("loading animation {}", anim.name().unwrap_or("no_name").to_string());
+
         Animation {
             name: anim.name().unwrap_or("").to_string(),
             samplers,
@@ -524,6 +526,7 @@ fn load_gltf_animations(
 
     }).collect();
 
+    
     Ok(animations)
 }
  

@@ -102,6 +102,10 @@ impl ApplicationHandler for AppManager {
 				.unwrap_or(0.0);
 			self.last_frame_time = Some(now);
 
+            // animations
+            app.data.models_data.update_animations(delta_time);
+
+            //  cameras
 			for (keycode, action) in &app.input_binding.camera_bindings {
 				if self.input.key_held(*keycode) {
 					app.data.camera_data.process_keyboard(*action, delta_time);
@@ -269,17 +273,17 @@ impl App {
         )?;
         
         // load .glb model
-        let (helm_model, helm_textures) = load_gltf_model(
+        let (cesium_man_model, cesium_man_textures) = load_gltf_model(
             &device,
             &instance,
             physical_device,
-            FLIGHT_HELM_PATH,
+            CESIUM_MAN_PATH,
             command_data.setup_command_buffer,
             graphics_queue
         )?;
 
         // 8. texture
-        let textures_data = helm_textures;
+        let textures_data = cesium_man_textures;
 
         let default_texture = create_default_texture(
             &instance,
@@ -290,7 +294,7 @@ impl App {
         )?;
 
         // 9. model
-        let models_data = helm_model;
+        let models_data = cesium_man_model;
 
         // 10. buffers
         let buffers_data = BuffersData::create(
@@ -324,7 +328,7 @@ impl App {
         // 13. Camera
         // TODO: support multiple cameras
         let mut camera = CameraBuilder::new()
-            .movement_speed(30.0)
+            .movement_speed(10.0)
             .mouse_sensitivity(0.02)
             .build();
 
@@ -563,13 +567,13 @@ impl App {
     }
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        debug!("camera info:\n- position: {:?}\n- front: {:?}\n- right {:?}\n- up: {:?}\n- zoom: {:?}°",
-            self.data.camera_data.get_position(),
-            self.data.camera_data.get_front(),
-            self.data.camera_data.get_right(),
-            self.data.camera_data.get_up(),
-            self.data.camera_data.get_zoom()
-        );
+        // debug!("camera info:\n- position: {:?}\n- front: {:?}\n- right {:?}\n- up: {:?}\n- zoom: {:?}°",
+        //     self.data.camera_data.get_position(),
+        //     self.data.camera_data.get_front(),
+        //     self.data.camera_data.get_right(),
+        //     self.data.camera_data.get_up(),
+        //     self.data.camera_data.get_zoom()
+        // );
 
         let view = self.data.camera_data.get_view_matrix();
 

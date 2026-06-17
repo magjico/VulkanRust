@@ -58,10 +58,12 @@ pub const TEXTURE_PATH: &str = "resources/textures/viking_room.png";
 pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
 
 // 2 - glb 
-/// Duck path
-pub const DUCK_PATH: &str = "resources/glb/Duck.glb";
-/// Flying helmet
+/// Duck - mesh store with texture
+pub const DUCK_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/glTF/Duck.glb";
+/// Flying Helmet - texture separated from mesh
 pub const FLIGHT_HELM_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf";
+/// Cesium Man
+pub const CESIUM_MAN_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/CesiumMan/glTF/CesiumMan.gltf";
 
 // 3 - Inputs
 pub const INPUT_PATH: &str = "config/input.toml";

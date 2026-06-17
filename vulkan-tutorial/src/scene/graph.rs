@@ -1,5 +1,6 @@
 /// Scene-graph implementation
 use std::{cell::RefCell, rc::{Weak, Rc}};
+use log::*;
 
 use cgmath::SquareMatrix;
 
@@ -46,6 +47,8 @@ impl Default for Node {
 
 impl Node {
     pub fn get_local_matrix(&self) -> Mat4 {
+        // debug!("model node info:\n- translation: {:?}\n- rotation: {:?}\n- scale: {:?}", self.translation, self.rotation, self.scale);
+
         let translation = Mat4::from_translation(self.translation);
         let rotation = Mat4::from(self.rotation); 
         let scale = Mat4::from_nonuniform_scale(

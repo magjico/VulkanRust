@@ -33,7 +33,6 @@ pub struct AnimationChannel {
     pub sampler_index: usize,
 }
 
-
 /// Structure for animation interpolation.
 /// 
 /// ## Fields
