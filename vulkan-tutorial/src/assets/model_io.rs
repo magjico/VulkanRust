@@ -4,11 +4,11 @@ use std::io::BufReader;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::path::Path;
-use std::rc::Rc;
-use log::*;
+use std::rc::{Rc, Weak};
 
+use log::*;
 use anyhow::{Result, anyhow};
-use cgmath::{One, Quaternion, Zero, vec2, vec3};
+use cgmath::{One, Quaternion, SquareMatrix, Zero, vec2, vec3};
 
 use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use png::Decoder;
@@ -22,8 +22,10 @@ use gltf::animation::{Interpolation, Property};
 
 use vulkanalia::prelude::v1_0::*;
 
+use crate::constants::MAX_FRAMES_IN_FLIGHT;
 use crate::math::*;
 use crate::render::*;
+use crate::resources::create_buffer;
 use crate::scene::*;
 
 //===============================================
@@ -141,6 +143,8 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
                     model.mesh.texcoords[tex_coord_offset],
                     1.0 - model.mesh.texcoords[tex_coord_offset + 1],
                 ),
+                joint_indices: UVec4::new(0, 0, 0, 0),
+                joint_weights: Vec4::new(1.0, 0.0, 0.0, 0.0),
             };
 
             if let Some(index) = unique_vertices.get(&vertex) {
@@ -529,7 +533,66 @@ fn load_gltf_animations(
     
     Ok(animations)
 }
- 
+
+pub fn load_gltf_skins(
+    device: &Device,
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+    skins: iter::Skins,
+    buffers: &[Data],
+    linear_nodes: &[Rc<RefCell<Node>>],
+) -> Result<Vec<Skin>> {
+    let skins = skins.map(|skin| -> Result<Skin> {
+        let name = skin.name().unwrap_or("").to_string();
+
+        let skeleton_root = skin.skeleton()
+            .map(|node| Rc::downgrade(&linear_nodes[node.index()]));
+
+        let joints: Vec<Weak<RefCell<Node>>> = skin.joints()
+            .map(|node| Rc::downgrade(&linear_nodes[node.index()]))
+            .collect();
+
+        let inverse_bind_mats = skin.reader(|buffer| Some(&buffers[buffer.index()]))
+            .read_inverse_bind_matrices()
+            .map(|iter| iter.map(Mat4::from).collect())
+            .unwrap_or_else(|| vec![Mat4::identity(); joints.len()]);
+
+        
+        let ssbo_size = (joints.len() * size_of::<Mat4>()) as vk::DeviceSize;
+        let mut ssbo_buffers = Vec::new();
+        let mut ssbo_memories = Vec::new();
+
+        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            let (buffer, mem) = create_buffer(
+                instance,
+                device,
+                physical_device,
+                ssbo_size,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
+
+            ssbo_buffers.push(buffer);
+            ssbo_memories.push(mem);
+        }
+
+        Ok(Skin {
+            name,
+            skeleton_root,
+            inverse_bind_mats,
+            joints,
+            ssbo_buffers,
+            ssbo_memories,
+            // filled later
+            descriptor_sets: Vec::new(),
+            joint_matrices: Vec::new()
+        })
+
+    }).collect::<Result<Vec<_>>>()?;
+
+    Ok(skins)
+}
+
 pub fn load_gltf_model(
     device: &Device,
     instance: &Instance,
@@ -576,11 +639,14 @@ pub fn load_gltf_model(
                 ),
         };
 
+        let skin_index = node.skin().map(|skin| skin.index() as i32).unwrap_or(-1);
+
         Rc::new(RefCell::new(Node {
             name: node.name().unwrap_or("").to_string(),
             translation,
             rotation,
             scale,
+            skin: skin_index,
 
             ..Node::default()
         }))
@@ -611,16 +677,22 @@ pub fn load_gltf_model(
                     let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
                     let mut tex_coords = reader.read_tex_coords(0).map(|t| t.into_f32());
+                    let mut joints = reader.read_joints(0).map(|j| j.into_u16());
+                    let mut weights = reader.read_weights(0).map(|w| w.into_f32());
 
                     for p in positions {
                         let n = normals.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0, 1.0]);
                         let t = tex_coords.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0]);
+                        let j = joints.as_mut().and_then(|iter| iter.next()).unwrap_or([0, 0, 0, 0]);
+                        let w = weights.as_mut().and_then(|iter| iter.next()).unwrap_or([1.0, 0.0, 0.0, 0.0]);
 
                         mesh.vertices.push(Vertex {
-                            pos:       Vec3::new(p[0], p[1], p[2]),
-                            normal:    Vec3::new(n[0], n[1], n[2]),
-                            color:     Vec3::new(1.0, 1.0, 1.0),
-                            tex_coord: Vec2::new(t[0], t[1]),
+                            pos:				Vec3::new(p[0], p[1], p[2]),
+                            normal:				Vec3::new(n[0], n[1], n[2]),
+                            color:				Vec3::new(1.0, 1.0, 1.0),
+                            tex_coord:			Vec2::new(t[0], t[1]),
+                            joint_indices:		UVec4::new(j[0], j[1], j[2], j[3]),
+							joint_weights:		Vec4::new(w[0], w[1], w[2], w[3]),
                         });
                     }
 
@@ -633,7 +705,6 @@ pub fn load_gltf_model(
             
             linear_nodes[node.index()].borrow_mut().mesh = Some(mesh);
         }
-        
     }
 
     let nodes: Vec<Rc<RefCell<Node>>> = document.default_scene()
@@ -643,7 +714,17 @@ pub fn load_gltf_model(
         .map(|node| Rc::clone(&linear_nodes[node.index()]))
         .collect();
 
-    // 5 - animations
+    // 5 - skins
+    let skins = load_gltf_skins(
+        device,
+        instance,
+        physical_device,
+        document.skins(),
+        &buffers,
+        &linear_nodes
+    )?;
+
+    // 6 - animations
     let animations = load_gltf_animations(
         document.animations(),
         &buffers,
@@ -655,7 +736,8 @@ pub fn load_gltf_model(
             nodes,
             linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
             materials,
-            animations
+            animations,
+            skins
         },
         textures
     ))

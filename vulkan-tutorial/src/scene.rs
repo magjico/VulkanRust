@@ -13,6 +13,7 @@ pub use model::Model;
 pub use model::ModelGraph;
 
 pub use graph::Node;
+pub use graph::Skin;
 
 pub use animation::InterpolationType;
 pub use animation::AnimationSampler;

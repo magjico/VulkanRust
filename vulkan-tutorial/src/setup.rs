@@ -1,4 +1,4 @@
-/// Setup multiple **specific** app objects
+//! Setup multiple **specific** app objects
 use rand::RngExt;
 use crate::math::*;
 
@@ -9,7 +9,7 @@ use anyhow::Result;
 use vulkanalia::prelude::v1_0::*;
 
 use crate::render::{TextureData, UniformBufferObject, create_texture_image, create_texture_image_view, create_texture_sampler};
-use crate::scene::{Material, Model, ModelInstance};
+use crate::scene::{Material, Model, ModelInstance, Skin};
 use crate::constants::*;
 
 //===============================================
@@ -30,7 +30,8 @@ use crate::constants::*;
 pub fn create_descriptor_pool(
     device: &Device,
     swapchain_images_count: u32,
-    material_count: u32,
+    materials_count: u32,
+    skins_count: u32,
 ) -> Result<vk::DescriptorPool> {
     let ubo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
@@ -38,12 +39,16 @@ pub fn create_descriptor_pool(
 
     let sampler_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(material_count * 5);
+        .descriptor_count(materials_count * 5);
 
-    let pool_sizes = &[ubo_size, sampler_size];
+    let ssbo_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(skins_count * swapchain_images_count);
+
+    let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count + material_count);
+        .max_sets(swapchain_images_count + materials_count + skins_count * swapchain_images_count);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -175,6 +180,53 @@ pub fn create_material_descriptor_sets(
     Ok(descriptor_sets)
 }
 
+/// Generate a descriptor sets for each skins (**store inside the skin not return**).
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `skin_set_layout` ( [vk::DescriptorSetLayout] ) - the skin descriptor set layout.
+/// - `descriptor_pool` ( [vk::DescriptorPool] ) - the skin descriptor pool.
+/// - `skins` ( &mut [[Skin]] ) - All skins that need a descriptor sets.
+/// - `images_count` ( `usize` ) - Number of images in flight
+pub fn create_skin_descriptor_sets(
+    device: &Device,
+    skin_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    skins: &mut [Skin],
+    images_count: usize,
+) -> Result<()> {
+    skins.iter_mut().try_for_each(|skin| -> Result<()> {
+        let layouts = vec![skin_set_layout; images_count];
+        let info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(&layouts);
+        let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
+
+        for i in 0..images_count {
+            let buffer_info = &[
+                *vk::DescriptorBufferInfo::builder()
+                    .buffer(skin.ssbo_buffers[i])
+                    .offset(0)
+                    .range((skin.joints.len() * size_of::<Mat4>()) as vk::DeviceSize)
+            ];
+
+            let ssbo_write = vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(buffer_info);
+
+            unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
+        }
+
+        skin.descriptor_sets = descriptor_sets;
+        Ok(())
+    })?;
+
+    Ok(())
+}   
 
 //===============================================
 // Sync objects

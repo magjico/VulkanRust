@@ -18,9 +18,7 @@ use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
 
 use crate::constants::*;
-use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
-                    get_max_msaa_samples, create_logical_device, create_global_descriptor_set_layout,
-                    create_material_descriptor_set_layout, create_pipeline};
+use crate::gpu::{QueueFamilyIndices, create_global_descriptor_set_layout, create_instance, create_logical_device, create_material_descriptor_set_layout, create_pipeline, create_skin_descriptor_set_layout, get_max_msaa_samples, pick_best_physical_device};
 use crate::input::InputBindings;
 use crate::render::{UniformBufferObject, TextureData, create_color_objects, create_depth_objects,
                     create_swapchain, create_swapchain_image_views};
@@ -28,9 +26,8 @@ use crate::resources::{create_command_pool, create_command_pools, create_setup_c
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
 use crate::assets::{load_gltf_model};
-use crate::scene::{Camera, CameraBuilder, Material, ModelGraph, Node};
-use crate::setup::{create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets,
-                    create_sync_objects, create_default_texture};
+use crate::scene::{Camera, CameraBuilder, Material, ModelGraph, Node, Skin};
+use crate::setup::{create_default_texture, create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets, create_skin_descriptor_sets, create_sync_objects};
 use crate::math::{Mat4, Vec3};
 
 //===================================================
@@ -104,6 +101,13 @@ impl ApplicationHandler for AppManager {
 
             // animations
             app.data.models_data.update_animations(delta_time);
+
+            // skinning (prepare)
+            for skin in &mut app.data.models_data.skins {
+                if let Err(e) = skin.update_ssbo(&app.device, app.frame) {
+                    warn!("Failed to update skin SSBO: {}", e);
+                }
+            }
 
             //  cameras
 			for (keycode, action) in &app.input_binding.camera_bindings {
@@ -294,7 +298,7 @@ impl App {
         )?;
 
         // 9. model
-        let models_data = cesium_man_model;
+        let mut models_data = cesium_man_model;
 
         // 10. buffers
         let buffers_data = BuffersData::create(
@@ -315,6 +319,7 @@ impl App {
             &textures_data,
             &default_texture,
             &models_data.materials,
+            &mut models_data.skins,
             swapchain_data.swapchain_images.len(),
         )?;
         
@@ -381,6 +386,7 @@ impl App {
         self.destroy_swapchain();
         self.data.textures_data.iter_mut().for_each(|t| t.destroy(&self.device));
         self.data.default_texture.destroy(&self.device);
+        self.data.models_data.destroy(&self.device);
         self.data.descriptor_layout_data.destroy(&self.device);
         self.data.sync_data.destroy(&self.device);
         destroy_buffers(&self.device, &[self.data.buffers_data.interleaved_buffer], &[self.data.buffers_data.interleaved_buffer_memory]);
@@ -523,6 +529,7 @@ impl App {
             &self.data.descriptor_data,
             self.data.device_data.msaa_samples,
             image_index,
+            self.frame,
         )?;
 
         // Update UBO
@@ -747,7 +754,8 @@ impl PipelineData {
             depth_format,
             msaa_samples,
             descriptor_layout_data.global_set_layout,
-            descriptor_layout_data.material_set_layout
+            descriptor_layout_data.material_set_layout,
+			descriptor_layout_data.skin_set_layout,
         )?;
 
         Ok(Self {
@@ -838,16 +846,18 @@ impl BuffersData {
 pub struct DescriptorLayoutData {
     pub global_set_layout: vk::DescriptorSetLayout,
     pub material_set_layout: vk::DescriptorSetLayout,
+    pub skin_set_layout: vk::DescriptorSetLayout,
 }
 
 impl DescriptorLayoutData {
     pub fn create(
         device: &Device,
     ) -> Result<Self> {
-        let global_set_layout = create_global_descriptor_set_layout(&device)?;
-        let material_set_layout = create_material_descriptor_set_layout(&device)?;
+        let global_set_layout = create_global_descriptor_set_layout(device)?;
+        let material_set_layout = create_material_descriptor_set_layout(device)?;
+        let skin_set_layout = create_skin_descriptor_set_layout(device)?;
 
-        Ok(Self { global_set_layout, material_set_layout })
+        Ok(Self { global_set_layout, material_set_layout, skin_set_layout })
     }
 
     #[rustfmt::skip]
@@ -855,6 +865,7 @@ impl DescriptorLayoutData {
     pub unsafe fn destroy(&mut self, device: &Device) {
         device.destroy_descriptor_set_layout(self.global_set_layout, None);
         device.destroy_descriptor_set_layout(self.material_set_layout, None);
+        device.destroy_descriptor_set_layout(self.skin_set_layout, None);
     }
 }
 
@@ -873,15 +884,17 @@ impl DescriptorData {
         textures_data: &[TextureData],
         default_texture: &TextureData,
         materials_data: &[Material],
+        skins_data: &mut [Skin],
         images_count: usize,
     ) -> Result<Self> {
         let materials_count = materials_data.len();
-        info!("materials count: {}", materials_count);
+        let skins_count = skins_data.len();
 
         let descriptor_pool = create_descriptor_pool(
             device,
-            images_count as u32,
-            materials_count as u32,
+            images_count		as u32,
+            materials_count		as u32,
+            skins_count			as u32,
         )?;
         
         let global_descriptor_sets = create_global_descriptor_sets(
@@ -899,6 +912,14 @@ impl DescriptorData {
             materials_data,
             textures_data,
             default_texture
+        )?;
+
+        create_skin_descriptor_sets(
+            device,
+            descriptor_layout_data.skin_set_layout,
+            descriptor_pool,
+            skins_data,
+            MAX_FRAMES_IN_FLIGHT
         )?;
 
         Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets })
@@ -985,6 +1006,7 @@ impl CommandData {
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
+        frame_index: usize,
     ) -> Result<()> {
         // Pool
         let command_pool = self.command_pools[image_index];
@@ -1057,6 +1079,7 @@ impl CommandData {
             secondary_command_buffers.push(self.update_secondary_command_buffers(
                 device,
                 &node,
+				models_data,
                 pipeline_data,
                 buffers_data,
                 &[swapchain_data.swapchain_format],
@@ -1065,6 +1088,7 @@ impl CommandData {
                 msaa_samples,
                 image_index,
                 i,
+                frame_index,
             )?);
         }
 
@@ -1088,6 +1112,7 @@ impl CommandData {
         &mut self,
         device: &Device,
         model_node: &Node,
+		models_data: &ModelGraph,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_formats: &[vk::Format],
@@ -1096,6 +1121,7 @@ impl CommandData {
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
         node_index: usize,
+        frame_index: usize,
     ) -> Result<vk::CommandBuffer> {
         self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
@@ -1161,6 +1187,7 @@ impl CommandData {
                 .map(|mesh| mesh.material_index.max(0) as usize)
                 .unwrap_or(0);
 
+			
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -1169,6 +1196,19 @@ impl CommandData {
                 &[descriptor_data.material_descriptor_sets[material_descriptor_index]],
                 &[]
             );
+
+			// skin binding
+			if model_node.skin > -1 {
+				let skin = &models_data.skins[model_node.skin as usize];
+				device.cmd_bind_descriptor_sets(
+					command_buffer,
+					vk::PipelineBindPoint::GRAPHICS,
+					pipeline_data.pipeline_layout,
+					2,
+					&[skin.descriptor_sets[frame_index]],
+					&[]
+				);
+			}
 
             device.cmd_push_constants(
                 command_buffer,
@@ -1180,11 +1220,18 @@ impl CommandData {
             device.cmd_push_constants(
                 command_buffer,
                 pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::FRAGMENT,
+                vk::ShaderStageFlags::VERTEX,
                 64,
+                &model_node.skin.to_ne_bytes()
+            );
+            device.cmd_push_constants(
+                command_buffer,
+                pipeline_data.pipeline_layout,
+                vk::ShaderStageFlags::FRAGMENT,
+                68,
                 opacity_bytes,
             );
-
+            
             let (vertex_offset, first_index) = buffers_data.mesh_offsets.get(&node_index)
                 .copied()
                 .unwrap_or_default();

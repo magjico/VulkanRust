@@ -8,7 +8,7 @@ layout(set = 1, binding = 3) uniform sampler2D occlusion_texture;
 layout(set = 1, binding = 4) uniform sampler2D emissive_texture;
 
 layout(push_constant) uniform PushConstants {
-    layout(offset = 64) float opacity;
+    layout(offset = 68) float opacity;
 } pcs;
 
 // Take a look at the out vector inside shader.vert

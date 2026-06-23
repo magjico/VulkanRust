@@ -27,6 +27,24 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
     Ok(descriptor_set_layout)
 }
 
+/// create **skin** descriptor set layout.
+pub fn create_skin_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    // Animation joint binding
+    let joint_matrices_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[joint_matrices_binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+
+    Ok(descriptor_set_layout)
+}
+
 /// create material set layout in this order:
 /// base color, metallic-roughness, normal map, occlusion map, emissive map.
 pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
@@ -68,6 +86,7 @@ pub fn create_pipeline(
     msaa_samples: vk::SampleCountFlags,
     global_set_layout: vk::DescriptorSetLayout,
     material_set_layout: vk::DescriptorSetLayout,
+    skin_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     // Stages
     let vert_shader_module = create_shader_module(device, &vert[..])?;
@@ -161,15 +180,15 @@ pub fn create_pipeline(
     let vert_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::VERTEX)
         .offset(0)
-        .size(64 /* 16 x 4 byte float */);
+        .size(68 /* Mat4 (16 x 4 bytes float) + 4 bytes int*/);
 
     let frag_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .offset(64)
-        .size(4);
+        .offset(68)
+        .size(4 /* 4 bytes float */);
 
     // Layout
-    let set_layouts = &[global_set_layout, material_set_layout];
+    let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout];
     let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
         .push_constant_ranges(push_constant_ranges)

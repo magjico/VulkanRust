@@ -1,13 +1,15 @@
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
+
 use log::*;
-
 use anyhow::{Result, anyhow};
-
 use cgmath::{Deg, Euler, Rad, VectorSpace};
+
+use vulkanalia::prelude::v1_0::*;
 
 use crate::math::*;
 use crate::assets::load_obj_model;
+use crate::scene::Skin;
 use super::{Vertex, Mesh, Node, Animation, Material, PathType};
 
 //===============================================
@@ -108,7 +110,9 @@ pub struct ModelGraph {
     pub nodes: Vec<Rc<RefCell<Node>>>,
     pub linear_nodes: Vec<Weak<RefCell<Node>>>,
     pub materials: Vec<Material>,
-    pub animations: Vec<Animation>
+    pub animations: Vec<Animation>,
+
+    pub skins: Vec<Skin>,
 }
 
 impl ModelGraph {
@@ -193,5 +197,11 @@ impl ModelGraph {
                 warn!("Animation update failed: {}", e);
             }
         }
+    }
+
+    #[rustfmt::skip]
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&self, device: &Device) {
+        self.skins.iter().for_each(|skin| skin.destroy(device));
     }
 }

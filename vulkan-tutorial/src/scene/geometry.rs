@@ -11,11 +11,28 @@ pub struct Vertex {
     pub normal: Vec3,
     pub color: Vec3,
     pub tex_coord: Vec2,
+
+    pub joint_indices: UVec4,
+    pub joint_weights: Vec4,
 }
 
 impl Vertex {
-    pub const fn new(pos: Vec3, normal: Vec3, color: Vec3, tex_coord: Vec2) -> Self {
-        Self { pos, normal, color, tex_coord }
+    pub const fn new(
+        pos: Vec3,
+        normal: Vec3,
+        color: Vec3,
+        tex_coord: Vec2,
+        joint_indices: UVec4,
+        joint_weights: Vec4,
+    ) -> Self {
+        Self {
+            pos,
+            normal,
+            color,
+            tex_coord,
+            joint_indices,
+            joint_weights
+        }
     }
 
     pub fn binding_description() -> vk::VertexInputBindingDescription {
@@ -26,7 +43,7 @@ impl Vertex {
             .build()
     }
 
-    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 4] {
+    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 6] {
         let pos = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(0)
@@ -51,8 +68,20 @@ impl Vertex {
             .format(vk::Format::R32G32_SFLOAT)
             .offset((size_of::<Vec3>() * 3) as u32)
             .build();
+        let joint_indices = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(4)
+            .format(vk::Format::R16G16B16A16_UINT)
+            .offset((size_of::<Vec3>() * 3 + size_of::<Vec2>()) as u32)
+            .build();
+        let joint_weights = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(5)
+            .format(vk::Format::R32G32B32A32_SFLOAT)
+            .offset((size_of::<UVec4>() + size_of::<Vec3>() * 3 + size_of::<Vec2>()) as u32)
+            .build();
 
-        [pos, normal, color, tex_coord]
+        [pos, normal, color, tex_coord, joint_indices, joint_weights]
     }
 }
 
@@ -62,6 +91,8 @@ impl PartialEq for Vertex {
             && self.normal == other.normal
             && self.color == other.color
             && self.tex_coord == other.tex_coord
+            && self.joint_indices == other.joint_indices
+            && self.joint_weights == other.joint_weights
     }
 }
 
@@ -80,6 +111,14 @@ impl Hash for Vertex {
         self.color[2].to_bits().hash(state);
         self.tex_coord[0].to_bits().hash(state);
         self.tex_coord[1].to_bits().hash(state);
+        self.joint_indices[0].hash(state);
+        self.joint_indices[1].hash(state);
+        self.joint_indices[2].hash(state);
+        self.joint_indices[3].hash(state);
+        self.joint_weights[0].to_bits().hash(state);
+        self.joint_weights[1].to_bits().hash(state);
+        self.joint_weights[2].to_bits().hash(state);
+        self.joint_weights[3].to_bits().hash(state);
     }
 }
 
