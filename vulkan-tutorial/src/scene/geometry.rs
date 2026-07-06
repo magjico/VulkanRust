@@ -10,7 +10,9 @@ pub struct Vertex {
     pub pos: Vec3,
     pub normal: Vec3,
     pub color: Vec3,
-    pub tex_coord: Vec2,
+    pub uv0: Vec2,
+    pub uv1: Vec2,
+    pub tangent: Vec4, // xyz = tangent, w = handedness
 
     pub joint_indices: UVec4,
     pub joint_weights: Vec4,
@@ -21,7 +23,9 @@ impl Vertex {
         pos: Vec3,
         normal: Vec3,
         color: Vec3,
-        tex_coord: Vec2,
+        uv0: Vec2,
+        uv1: Vec2,
+        tangent: Vec4,
         joint_indices: UVec4,
         joint_weights: Vec4,
     ) -> Self {
@@ -29,7 +33,9 @@ impl Vertex {
             pos,
             normal,
             color,
-            tex_coord,
+            uv0,
+            uv1,
+            tangent,
             joint_indices,
             joint_weights
         }
@@ -43,7 +49,7 @@ impl Vertex {
             .build()
     }
 
-    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 6] {
+    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 8] {
         let pos = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(0)
@@ -62,26 +68,38 @@ impl Vertex {
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset((size_of::<Vec3>() * 2) as u32)
             .build();
-        let tex_coord = vk::VertexInputAttributeDescription::builder()
+        let uv0 = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(3)
             .format(vk::Format::R32G32_SFLOAT)
             .offset((size_of::<Vec3>() * 3) as u32)
             .build();
-        let joint_indices = vk::VertexInputAttributeDescription::builder()
+        let uv1 = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(4)
-            .format(vk::Format::R16G16B16A16_UINT)
+            .format(vk::Format::R32G32_SFLOAT)
             .offset((size_of::<Vec3>() * 3 + size_of::<Vec2>()) as u32)
             .build();
-        let joint_weights = vk::VertexInputAttributeDescription::builder()
+        let tangent = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(5)
             .format(vk::Format::R32G32B32A32_SFLOAT)
-            .offset((size_of::<UVec4>() + size_of::<Vec3>() * 3 + size_of::<Vec2>()) as u32)
+            .offset((size_of::<Vec3>() * 3 + size_of::<Vec2>() * 2) as u32)
+            .build();
+        let joint_indices = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(6)
+            .format(vk::Format::R16G16B16A16_UINT)
+            .offset((size_of::<Vec4>() + size_of::<Vec3>() * 3 + size_of::<Vec2>() * 2) as u32)
+            .build();
+        let joint_weights = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(7)
+            .format(vk::Format::R32G32B32A32_SFLOAT)
+            .offset((size_of::<UVec4>() + size_of::<Vec4>() + size_of::<Vec3>() * 3 + size_of::<Vec2>() * 2) as u32)
             .build();
 
-        [pos, normal, color, tex_coord, joint_indices, joint_weights]
+        [pos, normal, color, uv0, uv1, tangent, joint_indices, joint_weights]
     }
 }
 
@@ -90,7 +108,9 @@ impl PartialEq for Vertex {
         self.pos == other.pos
             && self.normal == other.normal
             && self.color == other.color
-            && self.tex_coord == other.tex_coord
+            && self.uv0 == other.uv0
+            && self.uv1 == other.uv1
+            && self.tangent == other.tangent
             && self.joint_indices == other.joint_indices
             && self.joint_weights == other.joint_weights
     }
@@ -109,8 +129,14 @@ impl Hash for Vertex {
         self.color[0].to_bits().hash(state);
         self.color[1].to_bits().hash(state);
         self.color[2].to_bits().hash(state);
-        self.tex_coord[0].to_bits().hash(state);
-        self.tex_coord[1].to_bits().hash(state);
+        self.uv0[0].to_bits().hash(state);
+        self.uv0[1].to_bits().hash(state);
+        self.uv1[0].to_bits().hash(state);
+        self.uv1[1].to_bits().hash(state);
+        self.tangent[0].to_bits().hash(state);
+        self.tangent[1].to_bits().hash(state);
+        self.tangent[2].to_bits().hash(state);
+        self.tangent[3].to_bits().hash(state);
         self.joint_indices[0].hash(state);
         self.joint_indices[1].hash(state);
         self.joint_indices[2].hash(state);
@@ -130,11 +156,23 @@ pub struct Material {
     pub roughness_factor: f32,
     pub emissive_factor: Vec3,
 
+    // Texture indices
     pub base_color_texture_idx: i32,
     pub metallic_roughness_texture_idx: i32,
     pub normal_texture_idx: i32,
     pub occlusion_texture_idx: i32,
-    pub emissive_texture_idx: i32
+    pub emissive_texture_idx: i32,
+
+    // Texture sets (which UV to use)
+    pub base_color_texture_set: i32,
+    pub metallic_roughness_texture_set: i32,
+    pub normal_texture_set: i32,
+    pub occlusion_texture_set: i32,
+    pub emissive_texture_set: i32,
+
+    // Alpha-mask
+    pub alpha_mask: f32,
+    pub alpha_mask_cutoff: f32,
 }
 
 impl Material {
@@ -149,7 +187,16 @@ impl Material {
             metallic_roughness_texture_idx: -1,
             normal_texture_idx: -1,
             occlusion_texture_idx: -1,
-            emissive_texture_idx: -1
+            emissive_texture_idx: -1,
+
+            base_color_texture_set: -1,
+            metallic_roughness_texture_set: -1,
+            normal_texture_set: -1,
+            occlusion_texture_set: -1,
+            emissive_texture_set: -1,
+
+            alpha_mask: 0.0,
+            alpha_mask_cutoff: 0.5,
         }
     }
 }

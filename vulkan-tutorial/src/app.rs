@@ -20,20 +20,19 @@ use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRendering
 use crate::constants::*;
 use crate::gpu::{QueueFamilyIndices, create_global_descriptor_set_layout, create_instance, create_logical_device, create_material_descriptor_set_layout, create_pipeline, create_skin_descriptor_set_layout, get_max_msaa_samples, pick_best_physical_device};
 use crate::input::InputBindings;
-use crate::render::{UniformBufferObject, TextureData, create_color_objects, create_depth_objects,
-                    create_swapchain, create_swapchain_image_views};
+use crate::render::{UniformBufferObject, TextureData, PushConstants, create_color_objects,
+                    create_depth_objects, create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
 use crate::assets::{load_gltf_model};
-use crate::scene::{Camera, CameraBuilder, Material, ModelGraph, Node, Skin};
-use crate::setup::{create_default_texture, create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets, create_skin_descriptor_sets, create_sync_objects};
-use crate::math::{Mat4, Vec3};
+use crate::scene::{Camera, CameraBuilder, LightBuffer, Material, ModelGraph, Node, Skin};
+use crate::setup::{create_default_lightning, create_default_texture, create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets, create_skin_descriptor_sets, create_sync_objects};
+use crate::math::{Vec3, Vec4};
 
 //===================================================
 // App Manager
 //===================================================
-
 
 /// Manage [App] and [Window] event interaction.
 #[derive(Default)]
@@ -85,9 +84,6 @@ impl ApplicationHandler for AppManager {
         self.input.end_step();
 
         if self.input.close_requested() || self.input.destroyed() {
-            if let Some(app) = self.app.as_mut() {
-                unsafe { app.destroy() }; 
-            }
             event_loop.exit();
             return;
         }
@@ -145,6 +141,12 @@ impl ApplicationHandler for AppManager {
             self.app = Some(App::create(&window).unwrap());
 			self.last_frame_time = Some(Instant::now());
             self.window = Some(window);
+        }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.app.as_mut() {
+            unsafe { app.destroy() }; 
         }
     }
 }
@@ -311,6 +313,9 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
 
+        // TODO: implement multiple type of light
+        let lights = create_default_lightning(&instance, &device, physical_device)?;
+
         // 11. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
@@ -320,6 +325,7 @@ impl App {
             &default_texture,
             &models_data.materials,
             &mut models_data.skins,
+            &lights,
             swapchain_data.swapchain_images.len(),
         )?;
         
@@ -339,6 +345,7 @@ impl App {
 
         camera.look_at(Vec3::new(0.0, 0.0, 0.0), None);
 
+
         let data = AppData {
             surface,
             device_data,
@@ -354,6 +361,7 @@ impl App {
             depth_data,
             color_data,
             camera_data: camera,
+            light_data: lights,
             messenger,
             default_texture
         };
@@ -381,12 +389,15 @@ impl App {
     pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
 
-        // Destroy Appdata
-        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         self.destroy_swapchain();
+
+        // Destroy Appdata
         self.data.textures_data.iter_mut().for_each(|t| t.destroy(&self.device));
         self.data.default_texture.destroy(&self.device);
+        self.data.light_data.destroy(&self.device);
         self.data.models_data.destroy(&self.device);
+        
+        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         self.data.descriptor_layout_data.destroy(&self.device);
         self.data.sync_data.destroy(&self.device);
         destroy_buffers(&self.device, &[self.data.buffers_data.interleaved_buffer], &[self.data.buffers_data.interleaved_buffer_memory]);
@@ -398,8 +409,8 @@ impl App {
         if let Some(messenger) = self.data.messenger {
             self.instance.destroy_debug_utils_messenger_ext(messenger, None);
         }
-        self.instance.destroy_instance(None);
 
+        self.instance.destroy_instance(None);
     }
 
     /// Destroys the parts of our Vulkan app related to the swapchain.
@@ -590,7 +601,20 @@ impl App {
             Some(1000.0)
         );
 
-        let ubo = UniformBufferObject { view, proj };
+        let cam_pos = {
+            let pos = self.data.camera_data.get_position();
+            Vec4::new(pos.x, pos.y, pos.z, 1.0)
+        };
+
+        let ubo = UniformBufferObject {
+            view,
+            proj,
+            cam_pos,
+            exposure: 4.5,
+            gamma: 2.2,
+            prefiltered_cube_mip_levels: 1.0,
+            scale_ibl_ambient: 1.0
+        };
 
         unsafe {
             let memory = self.device.map_memory(
@@ -643,6 +667,8 @@ pub struct AppData {
 	pub color_data: ColorData,
     // Camera
     pub camera_data: Camera,
+    // Lights
+    pub light_data: LightBuffer,
     // Debug
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
 
@@ -885,6 +911,7 @@ impl DescriptorData {
         default_texture: &TextureData,
         materials_data: &[Material],
         skins_data: &mut [Skin],
+        light_buffer: &LightBuffer,
         images_count: usize,
     ) -> Result<Self> {
         let materials_count = materials_data.len();
@@ -902,7 +929,8 @@ impl DescriptorData {
             images_count,
             descriptor_layout_data.global_set_layout,
             descriptor_pool,
-            uniform_buffers
+            uniform_buffers,
+            light_buffer,
         )?;
 
         let material_descriptor_sets = create_material_descriptor_sets(
@@ -1143,15 +1171,23 @@ impl CommandData {
         let mesh = model_node.mesh.as_ref().unwrap();
         let model = model_node.get_global_matrix();
 
-        let model_bytes = unsafe {
-            std::slice::from_raw_parts(
-                &model as *const Mat4 as *const u8,
-                size_of::<Mat4>()
-            )
+        let material = if mesh.material_index >= 0 {
+            Some(&models_data.materials[mesh.material_index as usize])
+        } else {
+            None
         };
 
-        let opacity: f32 = 1.0;
-        let opacity_bytes = &opacity.to_ne_bytes()[..];
+        let metallic_factor = material.map(|m| m.metallic_factor).unwrap_or(1.0);
+        let roughness_factor = material.map(|m| m.roughness_factor).unwrap_or(1.0);
+		let _padding = 0.0;
+		let base_color_factor = material.map(|m| m.base_color_factor).unwrap_or(Vec4::new(1.0, 1.0, 1.0, 1.0));
+		let base_color_texture_set	= material.map(|m| m.base_color_texture_set).unwrap_or(-1);
+		let physical_descriptor_texture_set = material.map(|m| m.metallic_roughness_texture_set).unwrap_or(-1);
+		let normal_texture_set = material.map(|m| m.normal_texture_set).unwrap_or(-1);
+		let occlusion_texture_set= material.map(|m| m.occlusion_texture_set).unwrap_or(-1);
+		let emissive_texture_set= material.map(|m| m.emissive_texture_set).unwrap_or(-1);
+		let alpha_mask = material.map(|m| m.alpha_mask).unwrap_or(0.0);
+		let alpha_mask_cutoff = material.map(|m| m.alpha_mask_cutoff).unwrap_or(0.5);
 
         let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
             .color_attachment_formats(swapchain_formats)
@@ -1210,26 +1246,43 @@ impl CommandData {
 				);
 			}
 
+            let push_constant = PushConstants {
+                model,
+                skin_count: model_node.skin,
+                
+                metallic_factor,
+				roughness_factor,
+				_padding,
+				base_color_factor,
+				base_color_texture_set,
+				physical_descriptor_texture_set,
+				normal_texture_set,
+				occlusion_texture_set,
+				emissive_texture_set,
+				alpha_mask,
+				alpha_mask_cutoff,
+            };
+
+			let push_bytes = std::slice::from_raw_parts(
+				&push_constant as *const PushConstants as *const u8,
+				size_of::<PushConstants>()
+			);
+
+			let frag_offset = PushConstants::get_frag_offset();
+
             device.cmd_push_constants(
                 command_buffer,
                 pipeline_data.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0,
-                model_bytes
-            );
-            device.cmd_push_constants(
-                command_buffer,
-                pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                64,
-                &model_node.skin.to_ne_bytes()
+                &push_bytes[..frag_offset as usize]
             );
             device.cmd_push_constants(
                 command_buffer,
                 pipeline_data.pipeline_layout,
                 vk::ShaderStageFlags::FRAGMENT,
-                68,
-                opacity_bytes,
+                frag_offset,
+                &push_bytes[frag_offset as usize..],
             );
             
             let (vertex_offset, first_index) = buffers_data.mesh_offsets.get(&node_index)

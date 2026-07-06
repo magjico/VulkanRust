@@ -192,11 +192,65 @@ impl ModelGraph {
 
     pub fn update_animations(&mut self, delta_time: f32) {
         for i in 0..self.animations.len() {
-            debug!("animation {} current time: {}", i, self.animations[i].current_time);
             if let Err(e) = self.update_animation(i, delta_time) {
                 warn!("Animation update failed: {}", e);
             }
         }
+    }
+
+    pub fn get_debug_info(&self) -> Result<()> {
+        let mut min_pos = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+        let mut max_pos = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+
+        for w_node in &self.linear_nodes {
+            let Some(ref_node) = w_node.upgrade() else {
+                debug!("node upgrade failed");
+                continue
+            };
+            let node = ref_node.borrow();
+
+            if node.name == "Z_UP" {
+                debug!("Z_UP transform: t={:?} r={:?} s={:?}", 
+                    node.translation, node.rotation, node.scale);
+                
+                debug!("Z_UP global matrix: {:?}", node.get_global_matrix());
+            }
+
+            if node.mesh.is_none() {
+                debug!("node '{}' has no mesh", node.name);
+                continue;
+            }
+            let mesh = node.mesh.as_ref().unwrap();
+            debug!("node '{}' has {} vertices", node.name, mesh.vertices.len());
+
+            let global_matrix = node.get_global_matrix();
+
+            for vertex in &mesh.vertices {
+                let world_pos = global_matrix * Vec4::new(
+                    vertex.pos.x,
+                    vertex.pos.y,
+                    vertex.pos.z,
+                    1.0
+                );
+
+                min_pos.x = min_pos.x.min(world_pos.x);
+                min_pos.y = min_pos.y.min(world_pos.y);
+                min_pos.z = min_pos.z.min(world_pos.z);
+                max_pos.x = max_pos.x.max(world_pos.x);
+                max_pos.y = max_pos.y.max(world_pos.y);
+                max_pos.z = max_pos.z.max(world_pos.z);
+            }
+        }
+
+        let center = (min_pos + max_pos) / 2.0;
+        let size   = max_pos - min_pos;
+
+        debug!(
+            "Model Debug Info:\n\t- min position: {:?}\n\t- max position: {:?}\n\t- center: {:?}\n\t- size: {:?}",
+            min_pos, max_pos, center, size
+        );
+
+        Ok(())
     }
 
     #[rustfmt::skip]

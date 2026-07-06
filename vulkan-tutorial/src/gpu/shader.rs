@@ -10,15 +10,24 @@ use crate::scene::Vertex;
 //===========================================
 
 /// create **UBO** descriptor set layout.
+/// 
+/// **change every frame**
 pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     // Base-color binding
     let ubo_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::VERTEX);
+        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding];
+    // Light binding
+    let light_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[ubo_binding, light_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 
@@ -28,6 +37,8 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
 }
 
 /// create **skin** descriptor set layout.
+/// 
+/// **change by skinned mesh***
 pub fn create_skin_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     // Animation joint binding
     let joint_matrices_binding = vk::DescriptorSetLayoutBinding::builder()
@@ -47,6 +58,8 @@ pub fn create_skin_descriptor_set_layout(device: &Device) -> Result<vk::Descript
 
 /// create material set layout in this order:
 /// base color, metallic-roughness, normal map, occlusion map, emissive map.
+/// 
+/// **change by mesh**
 pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     let bindings: Vec<vk::DescriptorSetLayoutBinding>  = (0..5u32)
         .map(|i| *vk::DescriptorSetLayoutBinding::builder()
@@ -61,7 +74,6 @@ pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::Desc
 
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
     Ok(descriptor_set_layout)
-
 }
 
 //===========================================
@@ -165,8 +177,8 @@ pub fn create_pipeline(
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)
-        .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
         .alpha_blend_op(vk::BlendOp::ADD);
 
     let attachments = &[attachment];
@@ -185,7 +197,7 @@ pub fn create_pipeline(
     let frag_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
         .offset(68)
-        .size(4 /* 4 bytes float */);
+        .size(56);
 
     // Layout
     let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout];

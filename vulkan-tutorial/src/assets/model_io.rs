@@ -139,10 +139,12 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
                     )
                 },
                 color: vec3(1.0, 1.0, 1.0),
-                tex_coord: vec2(
+                uv0: vec2(
                     model.mesh.texcoords[tex_coord_offset],
                     1.0 - model.mesh.texcoords[tex_coord_offset + 1],
                 ),
+                uv1: vec2(0.0, 0.0),
+                tangent: Vec4::new(1.0, 0.0, 0.0, 1.0),
                 joint_indices: UVec4::new(0, 0, 0, 0),
                 joint_weights: Vec4::new(1.0, 0.0, 0.0, 0.0),
             };
@@ -387,6 +389,11 @@ fn load_gltf_materials(
         let pbr = material.pbr_metallic_roughness();
         let base_color_factor = pbr.base_color_factor();
 
+        let alpha_mask = match material.alpha_mode() {
+            gltf::material::AlphaMode::Mask => 1.0,
+            _ => 0.0,
+        };
+
         Material {
             base_color_factor: Vec4::new(
                 base_color_factor[0],
@@ -416,6 +423,27 @@ fn load_gltf_materials(
             emissive_texture_idx: material.emissive_texture()
                 .map(|text| text.texture().source().index() as i32)
                 .unwrap_or(-1),
+
+            base_color_texture_set: pbr.base_color_texture()
+                .map(|text| text.tex_coord() as i32)
+                .unwrap_or(-1),
+            metallic_roughness_texture_set: pbr.metallic_roughness_texture()
+                .map(|text| text.tex_coord() as i32)
+                .unwrap_or(-1),
+            normal_texture_set: material.normal_texture()
+                .map(|text| text.tex_coord() as i32)
+                .unwrap_or(-1),
+            occlusion_texture_set: material.occlusion_texture()
+                .map(|text| text.tex_coord() as i32)
+                .unwrap_or(-1),
+            emissive_texture_set: material.emissive_texture()
+                .map(|text| text.tex_coord() as i32)
+                .unwrap_or(-1),
+            
+            alpha_mask,
+            alpha_mask_cutoff: material.alpha_cutoff()
+                .unwrap_or(0.5)
+
         }
     }).collect();
 
@@ -676,21 +704,27 @@ pub fn load_gltf_model(
 
                     let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
-                    let mut tex_coords = reader.read_tex_coords(0).map(|t| t.into_f32());
+                    let mut uv0 = reader.read_tex_coords(0).map(|t| t.into_f32());
+                    let mut uv1 = reader.read_tex_coords(1).map(|t| t.into_f32());
                     let mut joints = reader.read_joints(0).map(|j| j.into_u16());
                     let mut weights = reader.read_weights(0).map(|w| w.into_f32());
+                    let mut tangents = reader.read_tangents();
 
                     for p in positions {
                         let n = normals.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0, 1.0]);
-                        let t = tex_coords.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0]);
+                        let t0 = uv0.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0]);
+                        let t1 = uv1.as_mut().and_then(|iter| iter.next()).unwrap_or([0.0, 0.0]);
                         let j = joints.as_mut().and_then(|iter| iter.next()).unwrap_or([0, 0, 0, 0]);
                         let w = weights.as_mut().and_then(|iter| iter.next()).unwrap_or([1.0, 0.0, 0.0, 0.0]);
+                        let tg = tangents.as_mut().and_then(|iter| iter.next()).unwrap_or([1.0, 0.0, 0.0, 1.0]);
 
                         mesh.vertices.push(Vertex {
                             pos:				Vec3::new(p[0], p[1], p[2]),
                             normal:				Vec3::new(n[0], n[1], n[2]),
                             color:				Vec3::new(1.0, 1.0, 1.0),
-                            tex_coord:			Vec2::new(t[0], t[1]),
+                            uv0:			    Vec2::new(t0[0], t0[1]),
+                            uv1:                Vec2::new(t1[0], t1[1]),
+                            tangent:            Vec4::new(tg[0], tg[1], tg[2], tg[3]),
                             joint_indices:		UVec4::new(j[0], j[1], j[2], j[3]),
 							joint_weights:		Vec4::new(w[0], w[1], w[2], w[3]),
                         });
@@ -731,14 +765,18 @@ pub fn load_gltf_model(
         &linear_nodes
     )?;
 
+    let model = ModelGraph {
+        nodes,
+        linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
+        materials,
+        animations,
+        skins
+    };
+
+    model.get_debug_info()?;
+
     Ok((
-        ModelGraph {
-            nodes,
-            linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
-            materials,
-            animations,
-            skins
-        },
+        model,
         textures
     ))
 }

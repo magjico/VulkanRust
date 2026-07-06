@@ -3,6 +3,7 @@ mod model;
 mod graph;
 mod animation;
 mod camera;
+mod light;
 
 pub use geometry::Vertex;
 pub use geometry::Material;
@@ -24,3 +25,6 @@ pub use animation::PathType;
 pub use camera::CameraMovement;
 pub use camera::Camera;
 pub use camera::CameraBuilder;
+
+pub use light::Light;
+pub use light::LightBuffer;

@@ -9,7 +9,7 @@ use anyhow::Result;
 use vulkanalia::prelude::v1_0::*;
 
 use crate::render::{TextureData, UniformBufferObject, create_texture_image, create_texture_image_view, create_texture_sampler};
-use crate::scene::{Material, Model, ModelInstance, Skin};
+use crate::scene::{Material, Model, ModelInstance, Skin, LightBuffer, Light};
 use crate::constants::*;
 
 //===============================================
@@ -43,7 +43,10 @@ pub fn create_descriptor_pool(
 
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(skins_count * swapchain_images_count);
+        .descriptor_count(
+            skins_count * swapchain_images_count    // skin SSBOs size
+            + swapchain_images_count                // Light SSBO size - 1 by swapchain image
+        );
 
     let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
@@ -64,7 +67,7 @@ pub fn create_descriptor_pool(
 /// - `swapchain_images_count` ( `usize` ) - number of swapchain images.
 /// - `global_set_layout` ( [`vk::DescriptorSetLayout`] ) - see [create_global_set_layout].
 /// - `descriptor_pool` ( [`vk::DescriptorPool`] ) - see [create_descriptor_pool].
-/// - `uniform_buffers` ( &[vk::Buffer] ).
+/// - `uniform_buffers` ( &[[vk::Buffer]] ).
 /// 
 /// ## Returns
 /// 
@@ -75,6 +78,7 @@ pub fn create_global_descriptor_sets(
     global_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     uniform_buffers: &[vk::Buffer],
+    light_buffer: &LightBuffer,
 ) -> Result<Vec<vk::DescriptorSet>> {
     let layouts = vec![global_set_layout; swapchain_images_count];
 
@@ -86,21 +90,29 @@ pub fn create_global_descriptor_sets(
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
 
     for i in 0..swapchain_images_count {
-        let info = vk::DescriptorBufferInfo::builder()
+        let ubo_info = &[*vk::DescriptorBufferInfo::builder()
             .buffer(uniform_buffers[i])
             .offset(0)
-            .range(size_of::<UniformBufferObject>() as u64);
-
-        let buffer_info = &[info];
-        
+            .range(size_of::<UniformBufferObject>() as u64)];
         let ubo_write = vk::WriteDescriptorSet::builder()
             .dst_set(descriptor_sets[i])
             .dst_binding(0)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(buffer_info);
+            .buffer_info(ubo_info);
 
-        unsafe { device.update_descriptor_sets(&[ubo_write], &[] as &[vk::CopyDescriptorSet]) };
+        let light_info = &[*vk::DescriptorBufferInfo::builder()
+            .buffer(light_buffer.buffer)
+            .offset(0)
+            .range((light_buffer.max_lights * size_of::<Light>()) as u64)];
+        let light_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(1)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(light_info);
+
+        unsafe { device.update_descriptor_sets(&[ubo_write, light_write], &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)
@@ -375,4 +387,40 @@ pub fn create_default_texture(
         sampler,
         mip_levels,
     })
+}
+
+pub fn create_default_lightning(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice
+) -> Result<LightBuffer> {
+    let mut light_buffer = LightBuffer::create(
+        instance,
+        device,
+        physical_device,
+        4
+    )?;
+
+    light_buffer.lights = vec![
+        Light {
+            position: Vec4::new(-10.0, 10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(10.0, 10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(-10.0, -10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(10.0, -10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+    ];
+
+    light_buffer.update(device)?;
+
+    Ok(light_buffer)
 }
