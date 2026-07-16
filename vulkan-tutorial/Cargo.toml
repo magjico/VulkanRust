@@ -15,6 +15,7 @@ winit_input_helper = "0.17.0"
 rand = "0.10.1"
 itertools = "0.14.0"
 exr = "1.74.0"
+bevy_ecs = "0.19.0"
 
 # i/o dependencies
 tobj = { version = "4.0.3", features = ["log"] } # used to load 3D models in the Wavefront .obj format

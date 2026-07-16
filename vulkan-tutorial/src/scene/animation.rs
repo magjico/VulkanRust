@@ -1,8 +1,11 @@
-use std::{cell::RefCell, rc::Weak};
-
-use super::Node;
+use anyhow::{Result, anyhow};
+use std::slice::Iter;
 
 use crate::math::*;
+use crate::ops::NodeId;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SamplerId(pub usize);
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum PathType {
@@ -19,18 +22,32 @@ pub enum InterpolationType {
     CUBICSPLINE,
 }
 
+/// Describe the animated state of a Model.
+/// 
+/// ## Variants
+/// 
+/// - `None` - No skin and no animation.
+/// - `Idle { skin_index }` - Skin but no animation.
+/// - `Animated { skin_index, anim_index }` - Skin and animation.
+pub enum AnimationSpec {
+	None,
+	Idle { skin_index: usize },
+	Animated { skin_index: usize, anim_index: usize },
+}
+
+
 /// Structure for animation key-frames.
 /// 
 /// ## Fields
 /// 
 /// - `path` ( [PathType] ) - type of key-frame animation.
-/// - `node` ( Weak<RefCell<[Node]>> ) - reference to a model node (from a scene-graph) to animate.
-/// - `sampler_index` ( usize ) - index inside a [AnimationSampler] table.
+/// - `node_id` ( [NodeId] ) - index-reference to a model node (from a scene-graph) to animate.
+/// - `sampler_index` ( [SamplerId] ) - index inside a [AnimationSampler] table.
 #[derive(Clone, Debug)]
 pub struct AnimationChannel {
     pub path: PathType,
-    pub node: Weak<RefCell<Node>>,
-    pub sampler_index: usize,
+    pub node_id: NodeId,
+    pub sampler_id: SamplerId,
 }
 
 /// Structure for animation interpolation.
@@ -61,23 +78,109 @@ pub struct AnimationSampler {
 /// - `current_time` ( f32 ) - current animation time value.
 #[derive(Clone, Debug)]
 pub struct Animation {
+    name: String,
+    samplers: Vec<AnimationSampler>,
+    channels: Vec<AnimationChannel>,
+    start: f32,
+    end: f32,
+}
+
+impl Animation {
+    pub fn new(
+        name: String,
+        samplers: Vec<AnimationSampler>,
+        channels: Vec<AnimationChannel>,
+        start: f32,
+        end: f32,
+    ) -> Self {
+        Self { name, samplers, channels, start, end }
+    }
+
+    pub fn get_sampler(&self, id: SamplerId) -> &AnimationSampler {
+        self.samplers.get(id.0)
+            .unwrap_or_else(|| panic!("animation sampler id ({}) out of bounds for length {}", id.0, self.samplers.len()))
+    }
+
+    pub fn get_channels_iter(&self) -> Iter<'_, AnimationChannel>{
+        self.channels.iter()
+    }
+
+    pub fn get_name(&self) -> &String { &self.name }
+
+    pub fn get_start(&self) -> f32 { self.start }
+
+    pub fn get_end(&self) -> f32 { self.end }
+
+    pub fn builder(start_time: f32, end_time: f32) -> AnimationBuilder {
+        AnimationBuilder::new(start_time, end_time)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AnimationBuilder {
     pub name: String,
     pub samplers: Vec<AnimationSampler>,
     pub channels: Vec<AnimationChannel>,
     pub start: f32,
     pub end: f32,
-    pub current_time: f32,
 }
 
-impl Default for Animation {
-    fn default() -> Self {
+impl AnimationBuilder {
+    pub fn new(start_time: f32, end_time: f32) -> Self {
         Self {
             name: String::new(),
             samplers: Vec::new(),
             channels: Vec::new(),
-            start: f32::MIN,
-            end: f32::MAX,
-            current_time: 0.0
+            start: start_time,
+            end: end_time,
         }
     }
+
+    pub fn name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn samplers(mut self, samplers: Vec<AnimationSampler>) -> Self {
+        self.samplers = samplers;
+        self
+    }
+
+    pub fn channels(mut self, channels: Vec<AnimationChannel>) -> Self {
+        self.channels = channels;
+        self
+    }
+
+    pub fn anim_start_time(mut self, start: f32) -> Self {
+        self.start = start;
+        self
+    }
+
+    pub fn anim_end_time(mut self, end: f32) -> Self {
+        self.end = end;
+        self
+    }
+
+    pub fn build(self) -> Result<Animation> {
+        if self.start >= self.end {
+            return Err(anyhow!("Animation '{}' - start ({}) must be < end ({})", self.name, self.start, self.end));
+        }
+
+        for ch in &self.channels {
+            if ch.sampler_id.0 >= self.samplers.len() {
+                return Err(
+                    anyhow!("Animation '{}' - channel sampler_id {} out of bounds for samplers length {}",
+                    self.name, ch.sampler_id.0, self.samplers.len())
+                );
+            }
+        }
+
+        Ok( Animation::new(
+            self.name,
+            self.samplers,
+            self.channels,
+            self.start,
+            self.end,
+        ))
+    } 
 }

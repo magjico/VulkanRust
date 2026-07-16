@@ -195,8 +195,8 @@ pub fn create_interleaved_buffer(
     )?;
 
     // Copy (staging)
-    let memory = unsafe { device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8 };
     unsafe {
+        let memory =  device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8;
         memcpy(vertices.as_ptr() as *const u8, memory, vertex_size as usize);
         memcpy(indices.as_ptr() as *const u8, memory.add(vertex_size as usize), index_size as usize);
         device.unmap_memory(staging_buffer_memory);

@@ -2,9 +2,7 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::collections::HashMap;
-use std::cell::RefCell;
 use std::path::Path;
-use std::rc::{Rc, Weak};
 
 use log::*;
 use anyhow::{Result, anyhow};
@@ -22,10 +20,9 @@ use gltf::animation::{Interpolation, Property};
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::constants::MAX_FRAMES_IN_FLIGHT;
+use crate::ops::{FlatGraph, Node, NodeId};
 use crate::math::*;
 use crate::render::*;
-use crate::resources::create_buffer;
 use crate::scene::*;
 
 //===============================================
@@ -160,7 +157,7 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
         }
     }
 
-    Ok(Mesh {vertices, indices, material_index: -1})
+    Ok(Mesh {vertices, indices, material_index: None})
 }
 
 pub fn load_3d_content(
@@ -453,7 +450,6 @@ fn load_gltf_materials(
 fn load_gltf_animations(
     animations: iter::Animations,
     buffers: &[Data],
-    linear_nodes: &[Rc<RefCell<Node>>],
 ) -> Result<Vec<Animation>> {
     let animations: Vec<Animation> = animations.map(|anim| {
         // Samplers
@@ -521,7 +517,6 @@ fn load_gltf_animations(
 
         // Channel
         let channels: Vec<AnimationChannel> = anim.channels().map(|channel| {
-            let sampler_index = channel.sampler().index();
             let path = match channel.target().property() {
                 Property::Translation => PathType::TRANSLATION,
                 Property::Rotation => PathType::ROTATION,
@@ -529,12 +524,13 @@ fn load_gltf_animations(
                 Property::MorphTargetWeights => PathType::MORPH,
             };
 
-            let node = Rc::downgrade(&linear_nodes[channel.target().node().index()]);
+            let node_id = NodeId(channel.target().node().index());
+            let sampler_id = SamplerId(channel.sampler().index());
 
             AnimationChannel {
                 path,
-                node,
-                sampler_index
+                node_id,
+                sampler_id
             }
         })
         .collect();
@@ -547,15 +543,13 @@ fn load_gltf_animations(
 
         // debug!("loading animation {}", anim.name().unwrap_or("no_name").to_string());
 
-        Animation {
-            name: anim.name().unwrap_or("").to_string(),
+        Animation::new(
+            anim.name().unwrap_or("").to_string(),
             samplers,
             channels,
             start,
-            end,
-            current_time: 0.0,
-        }
-
+            end
+        )
     }).collect();
 
     
@@ -563,21 +557,17 @@ fn load_gltf_animations(
 }
 
 pub fn load_gltf_skins(
-    device: &Device,
-    instance: &Instance,
-    physical_device: vk::PhysicalDevice,
     skins: iter::Skins,
     buffers: &[Data],
-    linear_nodes: &[Rc<RefCell<Node>>],
 ) -> Result<Vec<Skin>> {
     let skins = skins.map(|skin| -> Result<Skin> {
         let name = skin.name().unwrap_or("").to_string();
 
         let skeleton_root = skin.skeleton()
-            .map(|node| Rc::downgrade(&linear_nodes[node.index()]));
+            .map(|node| NodeId(node.index()));
 
-        let joints: Vec<Weak<RefCell<Node>>> = skin.joints()
-            .map(|node| Rc::downgrade(&linear_nodes[node.index()]))
+        let joints: Vec<NodeId> = skin.joints()
+            .map(|node| NodeId(node.index()))
             .collect();
 
         let inverse_bind_mats = skin.reader(|buffer| Some(&buffers[buffer.index()]))
@@ -585,35 +575,11 @@ pub fn load_gltf_skins(
             .map(|iter| iter.map(Mat4::from).collect())
             .unwrap_or_else(|| vec![Mat4::identity(); joints.len()]);
 
-        
-        let ssbo_size = (joints.len() * size_of::<Mat4>()) as vk::DeviceSize;
-        let mut ssbo_buffers = Vec::new();
-        let mut ssbo_memories = Vec::new();
-
-        for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            let (buffer, mem) = create_buffer(
-                instance,
-                device,
-                physical_device,
-                ssbo_size,
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
-
-            ssbo_buffers.push(buffer);
-            ssbo_memories.push(mem);
-        }
-
         Ok(Skin {
             name,
             skeleton_root,
             inverse_bind_mats,
             joints,
-            ssbo_buffers,
-            ssbo_memories,
-            // filled later
-            descriptor_sets: Vec::new(),
-            joint_matrices: Vec::new()
         })
 
     }).collect::<Result<Vec<_>>>()?;
@@ -652,8 +618,8 @@ pub fn load_gltf_model(
     // 3 - create a scene-graph
     // Use a two-pass approach to ensure all nodes exist before we try to link them together.
 
-    // 3.a - create all nodes 
-    let linear_nodes: Vec<Rc<RefCell<Node>>> = document.nodes().map(|node| {
+    // 3.a - create all nodes data 
+    let mut linear_nodes: Vec<Node<ModelNodeData>> = document.nodes().map(|node| {
         let (translation, rotation, scale) = match node.transform() {
             gltf::scene::Transform::Matrix { matrix: _ } => {
                 warn!("Matrix transform not yet supported, using identity.");
@@ -661,35 +627,39 @@ pub fn load_gltf_model(
             },
             
             gltf::scene::Transform::Decomposed { translation, rotation, scale } => (
-                    Vec3::new(translation[0], translation[1], translation[2]),
-                    Quat::new(rotation[3], rotation[0], rotation[1], rotation[2]),
-                    Vec3::new(scale[0], scale[1], scale[2])
-                ),
+                Vec3::new(translation[0], translation[1], translation[2]),
+                Quat::new(rotation[3], rotation[0], rotation[1], rotation[2]),
+                Vec3::new(scale[0], scale[1], scale[2])
+            ),
         };
 
         let skin_index = node.skin().map(|skin| skin.index() as i32).unwrap_or(-1);
-
-        Rc::new(RefCell::new(Node {
+        let model_node_data = ModelNodeData {
             name: node.name().unwrap_or("").to_string(),
+            
             translation,
             rotation,
             scale,
             skin: skin_index,
 
-            ..Node::default()
-        }))
+            ..ModelNodeData::default()
+        };
+
+        Node::<ModelNodeData> {
+            parent: None,
+            childs: Vec::new(),
+            value: model_node_data,
+        }
     }).collect();
 
     for node in document.nodes() {
         // 3.b - establish parent-child relationships
+        let parent_id = NodeId(node.index());
         for child in node.children() {
-            let parent_rc = Rc::clone(&linear_nodes[node.index()]);
-            let child_rc = Rc::clone(&linear_nodes[child.index()]);
+            let child_id = NodeId(child.index());
 
-            // child -> parent
-            child_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
-            // parent -> child
-            parent_rc.borrow_mut().childs.push(Rc::clone(&child_rc));
+            linear_nodes[child_id.0].parent = Some(parent_id);
+            linear_nodes[parent_id.0].childs.push(child_id);
         }
 
         // 4 - Load Mesh
@@ -700,7 +670,7 @@ pub fn load_gltf_model(
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
                 if let Some(iter) = reader.read_indices() {
-                    mesh.material_index = primitive.material().index().map(|i| i as i32).unwrap_or(-1);
+                    mesh.material_index = primitive.material().index().map(|i| Some(MaterialId(i))).unwrap_or(None);
 
                     let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
@@ -737,37 +707,34 @@ pub fn load_gltf_model(
                 }
             }
             
-            linear_nodes[node.index()].borrow_mut().mesh = Some(mesh);
+            linear_nodes[node.index()].value.mesh = Some(mesh);
         }
     }
 
-    let nodes: Vec<Rc<RefCell<Node>>> = document.default_scene()
+    let roots: Vec<NodeId> = document.default_scene()
         .or_else(|| document.scenes().next())
         .ok_or_else(|| anyhow!("glTF has no scene"))?
         .nodes()
-        .map(|node| Rc::clone(&linear_nodes[node.index()]))
+        .map(|node| NodeId(node.index()))
         .collect();
 
+    let graph = FlatGraph::new(linear_nodes);
+    
     // 5 - skins
     let skins = load_gltf_skins(
-        device,
-        instance,
-        physical_device,
         document.skins(),
         &buffers,
-        &linear_nodes
     )?;
 
     // 6 - animations
     let animations = load_gltf_animations(
         document.animations(),
         &buffers,
-        &linear_nodes
     )?;
 
     let model = ModelGraph {
-        nodes,
-        linear_nodes: linear_nodes.iter().map(|node| Rc::downgrade(node)).collect(),
+        graph,
+        roots,
         materials,
         animations,
         skins

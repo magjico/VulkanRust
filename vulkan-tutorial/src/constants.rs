@@ -17,6 +17,10 @@ pub const CORRECTION: Mat4 = Mat4::new(
     0.0, 0.0, 1.0 / 2.0, 1.0
 );
 
+pub const MAX_INSTANCES: u32 = 256;
+pub const MAX_JOINT_PER_INSTANCE: u32 = 64;
+pub const MAX_TOTAL_JOINTS: usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usize;
+
 //==================================
 // Info Consts
 //==================================

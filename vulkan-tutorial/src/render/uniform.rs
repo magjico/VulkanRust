@@ -4,7 +4,7 @@ use crate::math::*;
 
 /// UBO to pass to the shaders
 /// 
-/// # Fields
+/// ## Fields
 /// 
 /// - `view` (`Mat4`) - View matrix.
 /// - `proj` (`Mat4`) - Proj matrix.
@@ -34,7 +34,7 @@ pub struct UniformBufferObject {
 pub struct PushConstants {
     // vertex shader push constants
     pub model: Mat4,							// 64	bytes	->	 64 / 128
-    pub skin_count: i32,							//  4	bytes	->	 68 / 128
+    pub ssbo_offset: u32,						//  4	bytes	->	 68 / 128
 
     // fragment shader push constants
     pub metallic_factor: f32,					//  4	bytes	->	 72 / 128
@@ -53,6 +53,8 @@ pub struct PushConstants {
 }
 
 impl PushConstants {
+    pub const NO_SKIN: u32 = u32::MAX;
+
 	#[inline]
 	pub fn get_frag_offset() -> u32 { offset_of!(PushConstants, metallic_factor) as u32 }
 }

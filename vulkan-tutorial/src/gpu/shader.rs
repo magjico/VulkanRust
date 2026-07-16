@@ -36,18 +36,16 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
     Ok(descriptor_set_layout)
 }
 
-/// create **skin** descriptor set layout.
-/// 
-/// **change by skinned mesh***
-pub fn create_skin_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+/// create a unique descriptor set layout for **all skins**.
+pub fn create_skinning_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     // Animation joint binding
-    let joint_matrices_binding = vk::DescriptorSetLayoutBinding::builder()
+    let binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
 
-    let bindings = &[joint_matrices_binding];
+    let bindings = &[binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 

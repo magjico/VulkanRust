@@ -7,9 +7,10 @@ use log::*;
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
+use bevy_ecs::prelude::*;
 
-use crate::render::{TextureData, UniformBufferObject, create_texture_image, create_texture_image_view, create_texture_sampler};
-use crate::scene::{Material, Model, ModelInstance, Skin, LightBuffer, Light};
+use crate::render::*;
+use crate::scene::*;
 use crate::constants::*;
 
 //===============================================
@@ -192,52 +193,44 @@ pub fn create_material_descriptor_sets(
     Ok(descriptor_sets)
 }
 
-/// Generate a descriptor sets for each skins (**store inside the skin not return**).
+/// Generate a unique descriptor set for each skins.
 /// 
 /// ## Arguments
 /// 
 /// - `device` ( &[Device] ) - Vulkan device.
-/// - `skin_set_layout` ( [vk::DescriptorSetLayout] ) - the skin descriptor set layout.
-/// - `descriptor_pool` ( [vk::DescriptorPool] ) - the skin descriptor pool.
-/// - `skins` ( &mut [[Skin]] ) - All skins that need a descriptor sets.
-/// - `images_count` ( `usize` ) - Number of images in flight
-pub fn create_skin_descriptor_sets(
+/// - `skin_set_layout` ( [vk::DescriptorSetLayout] ) - the skinning descriptor set layout.
+/// - `descriptor_pool` ( [vk::DescriptorPool] ) - the skinning descriptor pool.
+/// - `skinning_buffer` ( [vk::Buffer] ) - the skinning buffer containing all joints matrices.
+pub fn create_skinning_descriptor_set(
     device: &Device,
-    skin_set_layout: vk::DescriptorSetLayout,
+    skinning_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
-    skins: &mut [Skin],
-    images_count: usize,
-) -> Result<()> {
-    skins.iter_mut().try_for_each(|skin| -> Result<()> {
-        let layouts = vec![skin_set_layout; images_count];
-        let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(descriptor_pool)
-            .set_layouts(&layouts);
-        let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
+    skinning_buffer: &SkinningBuffer,
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[skinning_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
 
-        for i in 0..images_count {
-            let buffer_info = &[
-                *vk::DescriptorBufferInfo::builder()
-                    .buffer(skin.ssbo_buffers[i])
-                    .offset(0)
-                    .range((skin.joints.len() * size_of::<Mat4>()) as vk::DeviceSize)
-            ];
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
 
-            let ssbo_write = vk::WriteDescriptorSet::builder()
-                .dst_set(descriptor_sets[i])
-                .dst_binding(0)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(buffer_info);
+    let buffer_info = &[
+        *vk::DescriptorBufferInfo::builder()
+            .buffer(skinning_buffer.buffer)
+            .offset(0)
+            .range(SkinningBuffer::get_range())
+    ];
 
-            unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
-        }
+    let ssbo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .dst_array_element(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(buffer_info);
 
-        skin.descriptor_sets = descriptor_sets;
-        Ok(())
-    })?;
+    unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
 
-    Ok(())
+    Ok(descriptor_set)
 }   
 
 //===============================================
@@ -301,11 +294,11 @@ pub fn create_sync_objects(
 pub fn setup_object_instances() -> Result<Vec<ModelInstance>> {
     let mut rng = rand::rng();
 
-    let n = 10;
-    let x_min = -2_f32;
-    let x_max =  2_f32;
-    let y_min = -2_f32;
-    let y_max =  2_f32;
+    let n = 5;
+    let x_min = -10_f32;
+    let x_max =  10_f32;
+    let y_min = -10_f32;
+    let y_max =  10_f32;
 
     let nx = (n as f32).sqrt().ceil() as i32;
     let ny = (n as f32 / nx as f32).ceil() as i32;
@@ -341,6 +334,13 @@ pub fn load_models() -> Result<Vec<Model>> {
     models.push(model);
 
     Ok(models)
+}
+
+/// spawn 5 models with the bevy ecs systems
+pub fn spawn_ecs_models(world: &mut World) {
+    for i in 0..5 {
+        // TODO
+    }
 }
 
 //===============================================

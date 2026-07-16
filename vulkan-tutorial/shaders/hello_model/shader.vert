@@ -19,8 +19,10 @@ layout(set = 2, binding = 0) readonly buffer JointMats {
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    int jointCount;
+    uint ssboOffset;
 } pcs;
+
+const uint NO_SKIN = 0xFFFFFFFFu;
 
 // Take a look at Vertex in geometry.rs to understand the "in" vectors.
 layout(location = 0) in vec3 inPosition;
@@ -43,12 +45,13 @@ layout(location = 4) out vec4 fragTangent;
 void main() {
     mat4 finalModel = pcs.model;
 
-    if (pcs.jointCount > -1) {
+    // TODO: change -1 for something else
+    if (pcs.ssboOffset != NO_SKIN) {
         mat4 skinMat =
-            inJointWeight.x * joints[inJointIndices.x] +
-            inJointWeight.y * joints[inJointIndices.y] +
-            inJointWeight.z * joints[inJointIndices.z] +
-            inJointWeight.w * joints[inJointIndices.w];
+            inJointWeight.x * joints[pcs.ssboOffset + inJointIndices.x] +
+            inJointWeight.y * joints[pcs.ssboOffset + inJointIndices.y] +
+            inJointWeight.z * joints[pcs.ssboOffset + inJointIndices.z] +
+            inJointWeight.w * joints[pcs.ssboOffset + inJointIndices.w];
 
         finalModel *= skinMat;
     }

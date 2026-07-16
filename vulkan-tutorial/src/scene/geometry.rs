@@ -148,6 +148,9 @@ impl Hash for Vertex {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct MaterialId(pub usize);
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Material {
@@ -201,21 +204,21 @@ impl Material {
     }
 }
 
-
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub material_index: i32,
+    pub material_index: Option<MaterialId>,
 }
 
+// TODO: mesh builder struct ?
 impl Default for Mesh {
     fn default() -> Self {
         Self {
             vertices: Vec::new(),
             indices: Vec::new(),
-            material_index: -1
+            material_index: None
         }
     }
 }
