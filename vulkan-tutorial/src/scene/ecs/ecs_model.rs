@@ -1,9 +1,11 @@
 use anyhow::{Result, anyhow};
 use cgmath::{Deg, Rad, Euler};
+use log::*;
 
 use bevy_ecs::prelude::*;
 
 use crate::math::{Mat4, Quat, Vec3};
+use crate::type_safety::{SkinId, AnimationId, ModelId};
 use super::{SkinningBuffer, VulkanDevice, SSBOSkiningAllocator, ModelsStorage, Time};
 use super::super::AnimationSpec;
 
@@ -95,31 +97,33 @@ pub struct Parent(pub Entity);
 /// 
 /// ## Fields
 /// 
-/// - `model_index` ( `usize` ) - Index to retrieve the data from a Vec<[ModelGraph]>.
+/// - `model_id` ( [ModelId] ) - Index to retrieve the data from a Vec<[ModelGraph]>.
 #[derive(Component)]
 pub struct MeshHandle {
-    pub model_index: usize
+    pub model_id: ModelId
 }
 
 /// Manage animation for an entity.
 /// 
 /// ## Fields
 /// 
-/// - `skin_index` ( `usize` ) - skin index of the skins vector of a ModelGraph.
-/// - `anim_index` ( `usize` ) - animation index of the animations vector of a ModelGraph.
+/// - `skin_id` ( [SkinId] ) - skin index of the skins vector of a ModelGraph.
+/// - `anim_id` ( [AnimationId] ) - animation index of the animations vector of a ModelGraph.
 /// - `anim_time` ( `f32` ) - current animation time for this single entity.
 /// - `ssbo_offset` ( `u32` ) - ssbo offset of this single entity.
 #[derive(Component)]
 pub struct SkeletonInstance {
-    pub skin_index:     usize,
-    pub anim_index:     usize,
-    pub anim_time:      f32,
-    pub ssbo_offset:    u32
+    pub skin_id:		SkinId,
+    pub anim_id:		AnimationId,
+    pub anim_time:		f32,
+    pub ssbo_offset:	u32
 }
 
 //===============================================
 // Queries
 //===============================================
+
+// --- animation --- //
 
 pub fn propagate_transforms_from_root(
     mut query: Query<(&Transform, &mut GlobalTransform), Without<Parent>>
@@ -143,27 +147,40 @@ pub fn propagate_transforms_to_children(
 
 pub fn update_skeletons(
 	mut query: Query<(&MeshHandle, &mut SkeletonInstance)>,
-	models: Res<ModelsStorage>,
+	mut models: ResMut<ModelsStorage>,
 	skinning_buffer: Res<SkinningBuffer>,
 	device: Res<VulkanDevice>,
 	time: Res<Time>,
 ) -> Result<() >{
 	for (mesh_handle, mut skeleton) in &mut query {
-		let model = &models.0[mesh_handle.model_index];
-		let anim = &model.animations[skeleton.anim_index];
+		let model = models.get_mut_model(mesh_handle.model_id);
+		let anim = model.get_animation(skeleton.anim_id);
 
 		skeleton.anim_time += time.0;
-		while anim.current_time >= anim.end {
-			anim.current_time -= anim.end - anim.start;
+		while skeleton.anim_time >= anim.get_end() {
+			skeleton.anim_time -= anim.get_end() - anim.get_start();
 		}
 
-		//TODO ...
+		model.apply_pose(skeleton.anim_id, skeleton.anim_time)?;
 		
-		let joint_mat = &model.skins[skeleton.anim_index].get_joint_matrices(graph)?; 
-
+		let joint_mats = model.get_skinning_joint_matrices(skeleton.skin_id);
+		skinning_buffer.write_slice(&device.0, skeleton.ssbo_offset, &joint_mats)?;
 	}
 
 	Ok(())
+}
+
+/// Same as [update_skeletons] but that can be pass to a [Schedule] with [Schedule::add_systems].
+pub fn update_skeletons_wrapped(
+    query: Query<(&MeshHandle, &mut SkeletonInstance)>,
+    models: ResMut<ModelsStorage>,
+    skinning_buffer: Res<SkinningBuffer>,
+    device: Res<VulkanDevice>,
+    time: Res<Time>,
+) {
+    if let Err(e) = update_skeletons(query, models, skinning_buffer, device, time) {
+        warn!("update_skeletons failed: {}", e);
+    }
 }
 
 //===============================================
@@ -220,9 +237,9 @@ impl ModelSpawnBuilder {
 					.ok_or_else(|| anyhow!("SSBO capacity exceeded - cannot allocatate skinning slot"))?;
 
 				Ok(SkeletonInstance {
-					skin_index,
-					anim_index: self.anim_index.unwrap_or(0),
-					anim_time: self.anim_time.unwrap_or(0.0),
+					skin_id:	SkinId(skin_index),
+					anim_id:	AnimationId(self.anim_index.unwrap_or(0)),
+					anim_time:	self.anim_time.unwrap_or(0.0),
 					ssbo_offset
 				})
 			})
@@ -232,7 +249,7 @@ impl ModelSpawnBuilder {
 			(
 				transform,
 				global_transform,
-				MeshHandle { model_index: self.model_index },
+				MeshHandle { model_id: ModelId(self.model_index) },
 			)
 		);
 

@@ -2,10 +2,7 @@ use anyhow::{Result, anyhow};
 use std::slice::Iter;
 
 use crate::math::*;
-use crate::ops::NodeId;
-
-#[derive(Clone, Copy, Debug)]
-pub struct SamplerId(pub usize);
+use crate::type_safety::{SamplerId, NodeId};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum PathType {
@@ -101,16 +98,17 @@ impl Animation {
             .unwrap_or_else(|| panic!("animation sampler id ({}) out of bounds for length {}", id.0, self.samplers.len()))
     }
 
+    #[inline]
     pub fn get_channels_iter(&self) -> Iter<'_, AnimationChannel>{
         self.channels.iter()
     }
-
+    #[inline]
     pub fn get_name(&self) -> &String { &self.name }
-
+    #[inline]
     pub fn get_start(&self) -> f32 { self.start }
-
+    #[inline]
     pub fn get_end(&self) -> f32 { self.end }
-
+    #[inline]
     pub fn builder(start_time: f32, end_time: f32) -> AnimationBuilder {
         AnimationBuilder::new(start_time, end_time)
     }

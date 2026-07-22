@@ -1,14 +1,14 @@
 //! Setup multiple **specific** app objects
 use rand::RngExt;
-use crate::math::*;
-
 use log::*;
-
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::IntoScheduleConfigs;
 
+use crate::ops::SlotAllocator;
+use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
 use crate::constants::*;
@@ -284,6 +284,35 @@ pub fn create_sync_objects(
         in_flight_fences,
         images_in_flight
     ))
+}
+
+//===============================================
+// Bevy ECS World
+//===============================================
+
+pub fn init_ecs_context(
+    device: &Device,
+	instance: &Instance,
+	physical_device: vk::PhysicalDevice,
+) -> Result<ECSContext> {
+    let mut ecs_context = ECSContext::init();
+    let skinning_buff = SkinningBuffer::create(instance, device, physical_device)?;
+
+    // world
+    ecs_context.world.insert_resource(skinning_buff);
+	ecs_context.world.insert_resource(SSBOSkiningAllocator(SlotAllocator::new(MAX_INSTANCES, MAX_JOINT_PER_INSTANCE)));
+	ecs_context.world.insert_resource(Time::default());
+
+    // schedule
+    ecs_context.schedule.add_systems(
+        (
+            propagate_transforms_from_root,
+            propagate_transforms_to_children,
+            update_skeletons_wrapped
+        ).chain()
+    );
+
+    Ok(ecs_context)
 }
 
 //===============================================

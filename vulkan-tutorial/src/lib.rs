@@ -10,3 +10,4 @@ pub mod constants;
 pub mod app;
 pub mod scene;
 pub mod input;
+pub mod type_safety;

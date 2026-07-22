@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use vulkanalia::prelude::v1_0::*;
 
 use crate::math::*;
+use crate::type_safety::MaterialId;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -147,9 +148,6 @@ impl Hash for Vertex {
         self.joint_weights[3].to_bits().hash(state);
     }
 }
-
-#[derive(Clone, Copy, Debug)]
-pub struct MaterialId(pub usize);
 
 #[repr(C)]
 #[derive(Clone, Debug)]

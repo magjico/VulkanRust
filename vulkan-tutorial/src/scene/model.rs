@@ -3,9 +3,11 @@ use anyhow::{Result, anyhow};
 use cgmath::{Deg, Euler, Rad, VectorSpace};
 
 use crate::math::*;
-use crate::ops::{FlatGraph, NodeId};
+use crate::ops::FlatGraph;
 use crate::assets::load_obj_model;
 use crate::ops::Node;
+use crate::type_safety::{NodeId, SkinId, MaterialId, AnimationId};
+
 use super::{Vertex, Mesh, Animation, Material, PathType};
 
 //===============================================
@@ -173,24 +175,13 @@ pub struct Skin {
     pub joints: Vec<NodeId>,
 }
 
-impl Skin {
-	pub fn get_joint_matrices(&self, graph: &ModelGraph) -> Vec<Mat4> {
-        self.joints.iter().enumerate()
-            .map(|(i, joint_id)| {
-                let global = graph.get_global_matrix_of(*joint_id);
-                global * self.inverse_bind_mats[i]
-            })
-            .collect()
-    }
-}
-
 #[derive(Debug)]
 pub struct ModelGraph {
-	pub graph:          FlatGraph<ModelNodeData>,
-    pub roots:          Vec<NodeId>,
-	pub materials:		Vec<Material>,
-	pub animations:		Vec<Animation>,
-	pub skins:			Vec<Skin>,
+	pub graph:			FlatGraph<ModelNodeData>,
+    pub roots:			Vec<NodeId>,
+	materials:			Vec<Material>,
+	animations:			Vec<Animation>,
+	skins:				Vec<Skin>,
 }
 
 impl ModelGraph {
@@ -216,16 +207,40 @@ impl ModelGraph {
         global
     }
 
+    pub fn get_skinning_joint_matrices(&self, skin_id: SkinId) -> Vec<Mat4> {
+        let skin = self.get_skin(skin_id);
+
+        skin.joints.iter().enumerate()
+            .map(|(i, joint_id)| {
+                let global = self.get_global_matrix_of(*joint_id);
+                global * skin.inverse_bind_mats[i]
+            })
+            .collect()
+    }
+
+    #[inline]
+    pub fn get_skin(&self, skin_id: SkinId) -> &Skin {
+        &self.skins[skin_id.0]
+    }
+    #[inline]
+    pub fn get_material(&self, material_id: MaterialId) -> &Material {
+        &self.materials[material_id.0]
+    }
+    #[inline]
+    pub fn get_animation(&self, animation_id: AnimationId) -> &Animation {
+		&self.animations[animation_id.0]
+	}
+
     pub fn apply_pose(
         &mut self,
-        index: usize,
+        animation_id: AnimationId,
         current_time: f32
     ) -> Result<()> {
-        if self.animations.is_empty() || index >= self.animations.len() {
-            return Err(anyhow!("Invalid animation index ({}) > animations lenght ({})", index, self.animations.len()));
+        if self.animations.is_empty() || animation_id.0 >= self.animations.len() {
+            return Err(anyhow!("Invalid animation index ({}) > animations lenght ({})", animation_id.0, self.animations.len()));
         }
 
-        let animation = &self.animations[index];
+        let animation = &self.animations[animation_id.0];
 
         for channel in animation.get_channels_iter() {
             let sampler = animation.get_sampler(channel.sampler_id);
@@ -234,8 +249,7 @@ impl ModelGraph {
                 probe_time < current_time);
 
             if keyframe_it == 0 || keyframe_it >= sampler.inputs.len() {
-                warn!("channel.node.upgrade() failed — node was dropped!");
-                return Ok(());
+                continue;
             } 
 
             let i = keyframe_it - 1;

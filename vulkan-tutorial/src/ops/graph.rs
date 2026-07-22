@@ -3,8 +3,7 @@
 //===============================================
 use std::slice::Iter;
 
-#[derive(Clone, Copy, Debug)]
-pub struct NodeId(pub usize);
+use crate::type_safety::NodeId;
 
 #[repr(C)]
 #[derive(Debug)]

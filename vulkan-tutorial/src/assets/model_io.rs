@@ -20,7 +20,8 @@ use gltf::animation::{Interpolation, Property};
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::ops::{FlatGraph, Node, NodeId};
+use crate::ops::{FlatGraph, Node};
+use crate::type_safety::{NodeId, SamplerId, MaterialId};
 use crate::math::*;
 use crate::render::*;
 use crate::scene::*;

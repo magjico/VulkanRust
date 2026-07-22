@@ -8,7 +8,6 @@ mod ecs;
 pub use geometry::Vertex;
 pub use geometry::Material;
 pub use geometry::Mesh;
-pub use geometry::MaterialId;
 
 pub use model::ModelInstance;
 pub use model::Model;
@@ -16,7 +15,6 @@ pub use model::ModelGraph;
 pub use model::Skin;
 pub use model::ModelNodeData;
 
-pub use animation::SamplerId;
 pub use animation::InterpolationType;
 pub use animation::AnimationSampler;
 pub use animation::AnimationSpec;
@@ -33,3 +31,14 @@ pub use light::Light;
 pub use light::LightBuffer;
 
 pub use ecs::SkinningBuffer;
+pub use ecs::Time;
+pub use ecs::SSBOSkiningAllocator;
+pub use ecs::ModelsStorage;
+pub use ecs::GlobalTransform;
+pub use ecs::MeshHandle;
+pub use ecs::SkeletonInstance;
+pub use ecs::ECSContext;
+pub use ecs::propagate_transforms_from_root;
+pub use ecs::propagate_transforms_to_children;
+pub use ecs::update_skeletons;
+pub use ecs::update_skeletons_wrapped;

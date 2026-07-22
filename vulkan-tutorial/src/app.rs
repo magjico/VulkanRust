@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+
 use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
@@ -12,23 +13,28 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event::{DeviceEvent, WindowEvent, DeviceId, StartCause};
 use winit_input_helper::WinitInputHelper;
 
+use bevy_ecs::prelude::*;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands, KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands, KhrSynchronization2ExtensionDeviceCommands};
+use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands,
+                    KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
+                    KhrSynchronization2ExtensionDeviceCommands};
 
 use crate::constants::*;
-use crate::gpu::{QueueFamilyIndices, create_global_descriptor_set_layout, create_instance, create_logical_device, create_material_descriptor_set_layout, create_pipeline, create_skin_descriptor_set_layout, get_max_msaa_samples, pick_best_physical_device};
+use crate::setup::*;
+use crate::gpu::*;
 use crate::input::InputBindings;
+use crate::type_safety::{MeshOffset, ModelId, NodeId};
 use crate::render::{UniformBufferObject, TextureData, PushConstants, create_color_objects,
                     create_depth_objects, create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
 use crate::assets::{load_gltf_model};
-use crate::scene::{Camera, CameraBuilder, LightBuffer, Material, ModelGraph, Node, Skin};
-use crate::setup::{create_default_lightning, create_default_texture, create_descriptor_pool, create_global_descriptor_sets, create_material_descriptor_sets, create_skin_descriptor_sets, create_sync_objects};
-use crate::math::{Vec3, Vec4};
+use crate::scene::{Camera, CameraBuilder, LightBuffer, Material, ModelGraph, Skin, ModelsStorage,
+                    ECSContext, Mesh};
+use crate::math::{Mat4, Vec3, Vec4};
 
 //===================================================
 // App Manager
@@ -802,7 +808,7 @@ pub struct BuffersData {
     pub interleaved_buffer: vk::Buffer,
     pub interleaved_buffer_memory: vk::DeviceMemory,
     pub interleaved_offset: u64,
-    pub mesh_offsets: HashMap<usize, (u32, u32)>, // key: node idx -> value: (vert_offset, index_offset) 
+    pub mesh_offsets: HashMap<(ModelId, NodeId), MeshOffset>, // key: (model_id, node_id) -> value: (vert_offset, index_offset) 
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
 }
@@ -812,7 +818,7 @@ impl BuffersData {
         instance: &Instance,
         device: &Device,
         physical_device: vk::PhysicalDevice,
-        models_data: &ModelGraph,
+        models: &[ModelGraph],
         setup_command_buffer: vk::CommandBuffer,
         graphics_queue: vk::Queue,
         images_count: usize,
@@ -821,22 +827,19 @@ impl BuffersData {
         let mut indices = Vec::new();
         let mut mesh_offsets = HashMap::new();
 
-        for (i, w_node) in models_data.linear_nodes.iter().enumerate() {
-            if let Some(ref_node) = w_node.upgrade() {
-                match ref_node.try_borrow() {
-                    Ok(node) => {
-                        if let Some(mesh) = &node.mesh {
-                            mesh_offsets.insert(i, (vertices.len() as u32, indices.len() as u32));
+        for (model_idx, model) in models.iter().enumerate() {
+            let model_id = ModelId(model_idx);
 
-                            vertices.extend_from_slice(&mesh.vertices);
-                            indices.extend_from_slice(&mesh.indices);
-                        }
-                    },
-                    Err(e) => {
-                        warn!("could not load a model node: {}", e);
-                        continue;
-                    },
-                };
+            for (node_idx, node) in model.graph.get_iterator().enumerate() {
+                if let Some(mesh) = &node.value.mesh {
+                    mesh_offsets.insert(
+                        (model_id, NodeId(node_idx)),
+                        MeshOffset {vertex_offset: vertices.len() as u32, first_index: indices.len() as u32 }
+                    );
+
+                    vertices.extend_from_slice(&mesh.vertices);
+                    indices.extend_from_slice(&mesh.indices);
+                }
             }
         }
 
@@ -900,6 +903,7 @@ pub struct DescriptorData {
     pub descriptor_pool: vk::DescriptorPool,
     pub global_descriptor_sets: Vec<vk::DescriptorSet>,
     pub material_descriptor_sets: Vec<vk::DescriptorSet>,
+    pub skinning_descriptor_set: vk::DescriptorSet,
 }
 
 impl DescriptorData {
@@ -1025,7 +1029,8 @@ impl CommandData {
     pub fn update_command_buffer(
         &mut self,
         device: &Device,
-        models_data: &ModelGraph,
+        ecs_context: &mut ECSContext,
+        models: &ModelsStorage,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_data: &SwapchainData,
@@ -1034,7 +1039,6 @@ impl CommandData {
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
-        frame_index: usize,
     ) -> Result<()> {
         // Pool
         let command_pool = self.command_pools[image_index];
@@ -1098,26 +1102,38 @@ impl CommandData {
         unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
 
         let mut secondary_command_buffers = Vec::new();
+        let mut query = ecs_context.get_renderable_query();
 
-        for (i, w_node) in models_data.linear_nodes.iter().enumerate() {
-            let Some(ref_node) = w_node.upgrade() else { continue };
-            if ref_node.borrow().mesh.is_none() { continue };
-            
-            let node = ref_node.borrow();
-            secondary_command_buffers.push(self.update_secondary_command_buffers(
-                device,
-                &node,
-				models_data,
-                pipeline_data,
-                buffers_data,
-                &[swapchain_data.swapchain_format],
-                depth_data,
-                descriptor_data,
-                msaa_samples,
-                image_index,
-                i,
-                frame_index,
-            )?);
+        let mut draw_index: usize = 0;
+        for (global, mesh_handle, skeleton) in query.iter(&ecs_context.world) {
+            let model = models.get_model(mesh_handle.model_id);
+            let ssbo_offset = skeleton.map(|s| s.ssbo_offset).unwrap_or(PushConstants::NO_SKIN);
+
+            for (i, node) in model.graph.get_iterator().enumerate() {
+                let Some(mesh) = &node.value.mesh else { continue };
+                let node_id = NodeId(i);
+                let final_model = global.0  * model.get_global_matrix_of(node_id);
+
+                secondary_command_buffers.push(self.update_secondary_command_buffers(
+                    device,
+                    mesh,
+                    final_model,
+                    ssbo_offset,
+                    model,
+                    pipeline_data,
+                    buffers_data,
+                    &[swapchain_data.swapchain_format],
+                    depth_data,
+                    descriptor_data,
+                    msaa_samples,
+                    mesh_handle.model_id,
+                    node_id,
+                    image_index,
+                    draw_index,
+                )?);
+
+                draw_index += 1;
+            }
         }
 
         unsafe { 
@@ -1139,22 +1155,25 @@ impl CommandData {
     pub fn update_secondary_command_buffers(
         &mut self,
         device: &Device,
-        model_node: &Node,
-		models_data: &ModelGraph,
+        mesh: &Mesh,
+        final_model: Mat4,
+        ssbo_offset: u32,
+        model: &ModelGraph,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_formats: &[vk::Format],
         depth_data: &DepthData,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
+        model_id: ModelId,
+        node_id: NodeId,
         image_index: usize,
-        node_index: usize,
-        frame_index: usize,
+        draw_index: usize
     ) -> Result<vk::CommandBuffer> {
         self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
 
-        while node_index >= command_buffers.len() {
+        while draw_index >= command_buffers.len() {
             let allocate_info = vk::CommandBufferAllocateInfo::builder()
                 .command_pool(self.command_pools[image_index])
                 .level(vk::CommandBufferLevel::SECONDARY)
@@ -1164,17 +1183,14 @@ impl CommandData {
             command_buffers.push(command_buffer);
         }
 
-        let command_buffer = command_buffers[node_index];
+        let command_buffer = command_buffers[draw_index];
 
-        // push-constant model matrix
-        // let model = model_data.instances[model_index].to_model_matrix();
-        let mesh = model_node.mesh.as_ref().unwrap();
-        let model = model_node.get_global_matrix();
-
-        let material = if mesh.material_index >= 0 {
-            Some(&models_data.materials[mesh.material_index as usize])
-        } else {
-            None
+        let material = {
+            if let Some(material_id) = mesh.material_index {
+                Some(&model.get_material(material_id))
+            } else {
+                None
+            }
         };
 
         let metallic_factor = material.map(|m| m.metallic_factor).unwrap_or(1.0);
@@ -1219,10 +1235,9 @@ impl CommandData {
             );
 
             // materials binding
-            let material_descriptor_index = model_node.mesh.as_ref()
-                .map(|mesh| mesh.material_index.max(0) as usize)
+            let material_descriptor_index = mesh.material_index
+                .map(|material_id| material_id.0)
                 .unwrap_or(0);
-
 			
             device.cmd_bind_descriptor_sets(
                 command_buffer,
@@ -1234,21 +1249,18 @@ impl CommandData {
             );
 
 			// skin binding
-			if model_node.skin > -1 {
-				let skin = &models_data.skins[model_node.skin as usize];
-				device.cmd_bind_descriptor_sets(
-					command_buffer,
-					vk::PipelineBindPoint::GRAPHICS,
-					pipeline_data.pipeline_layout,
-					2,
-					&[skin.descriptor_sets[frame_index]],
-					&[]
-				);
-			}
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_data.pipeline_layout,
+                2,
+                &[descriptor_data.skinning_descriptor_set],
+                &[]
+            );
 
             let push_constant = PushConstants {
-                model,
-                skin_count: model_node.skin,
+                model: final_model,
+                ssbo_offset,
                 
                 metallic_factor,
 				roughness_factor,
@@ -1285,16 +1297,16 @@ impl CommandData {
                 &push_bytes[frag_offset as usize..],
             );
             
-            let (vertex_offset, first_index) = buffers_data.mesh_offsets.get(&node_index)
+            let offset = buffers_data.mesh_offsets.get(&(model_id, node_id))
                 .copied()
-                .unwrap_or_default();
+                .unwrap_or(MeshOffset { vertex_offset: 0, first_index: 0 });
 
             device.cmd_draw_indexed(
                 command_buffer,
                 mesh.indices.len() as u32,
                 1,
-                first_index,
-                vertex_offset as i32,
+                offset.first_index,
+                offset.vertex_offset as i32,
                 0
             );
             device.end_command_buffer(command_buffer)?;
