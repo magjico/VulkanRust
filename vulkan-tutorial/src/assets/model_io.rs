@@ -21,7 +21,7 @@ use gltf::animation::{Interpolation, Property};
 use vulkanalia::prelude::v1_0::*;
 
 use crate::ops::{FlatGraph, Node};
-use crate::type_safety::{NodeId, SamplerId, MaterialId};
+use crate::type_safety::{NodeId, SamplerId, MaterialId, TextureId};
 use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
@@ -407,20 +407,20 @@ fn load_gltf_materials(
             },
 
             base_color_texture_idx: pbr.base_color_texture()
-                .map(|info| info.texture().source().index() as i32)
-                .unwrap_or(-1),
+                .map(|info| Some(TextureId(info.texture().source().index())))
+                .unwrap_or_default(),
             metallic_roughness_texture_idx: pbr.metallic_roughness_texture()
-                .map(|info| info.texture().source().index() as i32)
-                .unwrap_or(-1),
+                .map(|info| Some(TextureId(info.texture().source().index())))
+                .unwrap_or_default(),
             normal_texture_idx: material.normal_texture()
-                .map(|text| text.texture().source().index() as i32)
-                .unwrap_or(-1),
+                .map(|text| Some(TextureId(text.texture().source().index())))
+                .unwrap_or_default(),
             occlusion_texture_idx: material.occlusion_texture()
-                .map(|text| text.texture().source().index() as i32)
-                .unwrap_or(-1),
+                .map(|text| Some(TextureId(text.texture().source().index())))
+                .unwrap_or_default(),
             emissive_texture_idx: material.emissive_texture()
-                .map(|text| text.texture().source().index() as i32)
-                .unwrap_or(-1),
+                .map(|text| Some(TextureId(text.texture().source().index())))
+                .unwrap_or_default(),
 
             base_color_texture_set: pbr.base_color_texture()
                 .map(|text| text.tex_coord() as i32)
@@ -733,13 +733,13 @@ pub fn load_gltf_model(
         &buffers,
     )?;
 
-    let model = ModelGraph {
+    let model = ModelGraph::new(
         graph,
         roots,
         materials,
         animations,
         skins
-    };
+    );
 
     model.get_debug_info()?;
 
@@ -747,4 +747,38 @@ pub fn load_gltf_model(
         model,
         textures
     ))
+}
+
+fn register_model_textures(
+    textures_storage: &mut TexturesStorage,
+    model: &mut ModelGraph,
+    new_textures: Vec<TextureData>
+) -> TextureId {
+    let offset = textures_storage.extend(new_textures);
+    model.offset_materials_texture_ids(offset);
+    offset
+}
+
+pub fn load_model_with_offset(
+    device: &Device,
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+    path: &str,
+    name: &str,
+    setup_command_buffer: vk::CommandBuffer,
+    graphics_queue: vk::Queue,
+    models: &mut ModelsStorage,
+    textures: &mut TexturesStorage,
+    registry: &mut ModelRegistry,
+) -> Result<()> {
+    let (mut model_graph, model_textures) = load_gltf_model(
+        device, instance, physical_device, path, setup_command_buffer, graphics_queue,
+    )?;
+
+    let texture_id =register_model_textures(textures, &mut model_graph, model_textures);
+    let model_id = models.push(model_graph);
+    
+    registry.entries.insert(name.to_string(), ModelAssets { model_id, texture_id });
+
+    Ok(())
 }

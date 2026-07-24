@@ -13,7 +13,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event::{DeviceEvent, WindowEvent, DeviceId, StartCause};
 use winit_input_helper::WinitInputHelper;
 
-use bevy_ecs::prelude::*;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
@@ -26,14 +25,14 @@ use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
 use crate::type_safety::{MeshOffset, ModelId, NodeId};
-use crate::render::{UniformBufferObject, TextureData, PushConstants, create_color_objects,
+use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesStorage, create_color_objects,
                     create_depth_objects, create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
 use crate::assets::{load_gltf_model};
-use crate::scene::{Camera, CameraBuilder, LightBuffer, Material, ModelGraph, Skin, ModelsStorage,
-                    ECSContext, Mesh};
+use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, Mesh, ModelGraph,
+                    ModelsStorage, SkinningBuffer};
 use crate::math::{Mat4, Vec3, Vec4};
 
 //===================================================
@@ -162,12 +161,12 @@ impl ApplicationHandler for AppManager {
 //===================================================
 
 /// Vulkan app.
-#[derive(Clone)]
 pub struct App {
     pub entry: Entry,
     pub instance: Instance,
     pub data: AppData,
     pub device: Device,
+    pub ecs_context: ECSContext,
     pub frame: usize,
     pub resized: bool,
     pub start: Instant,
@@ -232,7 +231,10 @@ impl App {
             queue_family_indices
         );
 
-        // 3. swapchain
+        // 3. ECS Context
+        let mut ecs_context = init_ecs_context(&device, &instance, physical_device)?;
+
+        // 4. swapchain
         let swapchain_data = SwapchainData::create(
             window,
             &instance,
@@ -242,14 +244,14 @@ impl App {
             &mut device_data.queue_family_indices
         )?;
 
-        // 4. command
+        // 5. command
         let command_data = CommandData::create(
             &device,
             &mut device_data.queue_family_indices,
             &swapchain_data.swapchain_images
         )?;
 
-        // 5. color
+        // 6. color
         let color_data = ColorData::create(
             &instance,
             &device,
@@ -260,7 +262,7 @@ impl App {
             swapchain_data.swapchain_format
         )?;
 
-        // 6. depth
+        // 7. depth
         let depth_data = DepthData::create(
             &instance,
             &device,
@@ -270,7 +272,7 @@ impl App {
             msaa_samples,
         )?;
 
-        // 7. pipeline
+        // 8. pipeline
         let descriptor_layout_data = DescriptorLayoutData::create(&device)?;
 
         let pipeline_data = PipelineData::create(
@@ -294,7 +296,7 @@ impl App {
             graphics_queue
         )?;
 
-        // 8. texture
+        // 9. texture
         let textures_data = cesium_man_textures;
 
         let default_texture = create_default_texture(
@@ -305,10 +307,10 @@ impl App {
             graphics_queue
         )?;
 
-        // 9. model
+        // 10. model
         let mut models_data = cesium_man_model;
 
-        // 10. buffers
+        // 11. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
@@ -322,9 +324,10 @@ impl App {
         // TODO: implement multiple type of light
         let lights = create_default_lightning(&instance, &device, physical_device)?;
 
-        // 11. descriptor
+        // 12. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
+            &ecs_context,
             &descriptor_layout_data,
             &buffers_data.uniform_buffers,
             &textures_data,
@@ -335,14 +338,14 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
         
-        // 12. sync
+        // 13. sync
         let sync_data = SyncData::create(
             &device,
             MAX_FRAMES_IN_FLIGHT,
             swapchain_data.swapchain_images.len(),
         )?;
 
-        // 13. Camera
+        // 14. Camera
         // TODO: support multiple cameras
         let mut camera = CameraBuilder::new()
             .movement_speed(10.0)
@@ -381,6 +384,7 @@ impl App {
             instance,
             data,
             device,
+            ecs_context,
             frame: 0,
             resized: false,
             start: Instant::now(),
@@ -656,9 +660,9 @@ pub struct AppData {
     pub descriptor_layout_data: DescriptorLayoutData,
     pub pipeline_data: PipelineData,
     // Models
-    pub models_data: ModelGraph,
-    // Texture
-	pub textures_data: Vec<TextureData>,
+    pub models_data: ModelsStorage,
+    // Textures
+	pub textures_data: TexturesStorage,
     // Buffers
     pub buffers_data: BuffersData,
     // Descriptor
@@ -884,7 +888,7 @@ impl DescriptorLayoutData {
     ) -> Result<Self> {
         let global_set_layout = create_global_descriptor_set_layout(device)?;
         let material_set_layout = create_material_descriptor_set_layout(device)?;
-        let skin_set_layout = create_skin_descriptor_set_layout(device)?;
+        let skin_set_layout = create_skinning_descriptor_set_layout(device)?;
 
         Ok(Self { global_set_layout, material_set_layout, skin_set_layout })
     }
@@ -909,23 +913,23 @@ pub struct DescriptorData {
 impl DescriptorData {
     pub fn  create(
         device: &Device,
+        ecs_context: &ECSContext,
         descriptor_layout_data: &DescriptorLayoutData,
         uniform_buffers: &[vk::Buffer],
         textures_data: &[TextureData],
         default_texture: &TextureData,
         materials_data: &[Material],
-        skins_data: &mut [Skin],
         light_buffer: &LightBuffer,
         images_count: usize,
     ) -> Result<Self> {
         let materials_count = materials_data.len();
-        let skins_count = skins_data.len();
+        let skinning_buffer = ecs_context.world.get_resource::<SkinningBuffer>()
+            .ok_or_else(|| anyhow!("Skinning Buffer not found in ecs_context.world"))?;
 
         let descriptor_pool = create_descriptor_pool(
             device,
             images_count		as u32,
             materials_count		as u32,
-            skins_count			as u32,
         )?;
         
         let global_descriptor_sets = create_global_descriptor_sets(
@@ -946,15 +950,16 @@ impl DescriptorData {
             default_texture
         )?;
 
-        create_skin_descriptor_sets(
+
+
+        let skinning_descriptor_set = create_skinning_descriptor_set(
             device,
             descriptor_layout_data.skin_set_layout,
             descriptor_pool,
-            skins_data,
-            MAX_FRAMES_IN_FLIGHT
+            skinning_buffer,
         )?;
 
-        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets })
+        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets, skinning_descriptor_set })
     }
 
     pub fn update_global_descriptor_set(

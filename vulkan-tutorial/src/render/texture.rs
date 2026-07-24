@@ -10,6 +10,7 @@ use crate::resources::{
     begin_setup_command_buffer, flush_setup_command_buffer,
 };
 use crate::ops::copy_buffer_to_image;
+use crate::type_safety::TextureId;
 
 /// only use to store texture data (for now).
 #[derive(Clone, Debug)]
@@ -28,6 +29,36 @@ impl TextureData {
         device.destroy_image_view(self.image_view, None);
         device.destroy_image(self.image, None);
         device.free_memory(self.image_memory, None);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TexturesStorage(pub Vec<TextureData>);
+
+impl TexturesStorage {
+    #[inline]
+    pub fn get_texture(&self, texture_id: TextureId) -> &TextureData {
+        self.0.get(texture_id.0)
+            .unwrap_or_else(|| panic!("texture id ({}) out of bounds for length {}", texture_id.0, self.0.len()))
+    }
+
+    #[inline]
+    pub fn get_mut_texture(&mut self, texture_id: TextureId) -> &mut TextureData {
+        let len = self.0.len();
+        self.0.get_mut(texture_id.0)
+            .unwrap_or_else(|| panic!("texture id ({}) out of bounds for length {}", texture_id.0, len))
+    }
+
+    #[inline]
+    pub fn get_next_id(&self) -> TextureId {
+        TextureId(self.0.len())
+    }
+
+    #[inline]
+    pub fn extend(&mut self, textures: Vec<TextureData>) -> TextureId {
+        let id = self.get_next_id();
+        self.0.extend(textures);
+        id
     }
 }
 

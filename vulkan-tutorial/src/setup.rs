@@ -1,4 +1,5 @@
 //! Setup multiple **specific** app objects
+use cgmath::One;
 use rand::RngExt;
 use log::*;
 use anyhow::Result;
@@ -7,11 +8,13 @@ use vulkanalia::prelude::v1_0::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 
+use crate::assets::load_gltf_model;
 use crate::ops::SlotAllocator;
 use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
 use crate::constants::*;
+use crate::type_safety::*;
 
 //===============================================
 // Descriptors
@@ -24,6 +27,7 @@ use crate::constants::*;
 /// 
 /// - `device` ( &[Device] ) - The Vulkan device.
 /// - `swapchain_images_count` (`u32`) - number of swapchain images (we will generate a descriptor set by image).
+/// - `materials_count` (`u32`)
 /// 
 /// ## Returns
 /// 
@@ -32,7 +36,6 @@ pub fn create_descriptor_pool(
     device: &Device,
     swapchain_images_count: u32,
     materials_count: u32,
-    skins_count: u32,
 ) -> Result<vk::DescriptorPool> {
     let ubo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
@@ -45,14 +48,14 @@ pub fn create_descriptor_pool(
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(
-            skins_count * swapchain_images_count    // skin SSBOs size
-            + swapchain_images_count                // Light SSBO size - 1 by swapchain image
+            1							// Skin SSBOs size - a unique global set
+            + swapchain_images_count 	// Light SSBO size - 1 for each swapchain image
         );
 
     let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count + materials_count + skins_count * swapchain_images_count);
+        .max_sets(swapchain_images_count + materials_count + 1);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -365,11 +368,57 @@ pub fn load_models() -> Result<Vec<Model>> {
     Ok(models)
 }
 
-/// spawn 5 models with the bevy ecs systems
-pub fn spawn_ecs_models(world: &mut World) {
-    for i in 0..5 {
-        // TODO
+/// load gltf models
+pub fn load_gltf_models(
+	device: &Device,
+	instance: &Instance,
+	physical_device: vk::PhysicalDevice,
+	setup_command_buffer: vk::CommandBuffer,
+	graphics_queue: vk::Queue,
+	models: &mut ModelsStorage,
+    textures: &mut TexturesStorage,
+    model_registry: &mut ModelRegistry,
+) -> Result<()> {
+    for (model_path, model_key) in MODEL_INFO.iter() {
+        let (model_graph, model_textures) = load_gltf_model(
+            device, instance, physical_device, model_path, setup_command_buffer, graphics_queue
+        )?;
+
+        let model_id = models.push(model_graph);
+
     }
+
+	Ok(())
+}
+
+
+/// spawn 4 models with the bevy ecs systems
+pub fn spawn_from_cesium_man_instances(
+	world: &mut World,
+	cesium_man_id: ModelId,
+) -> Result<Vec<Entity>> {
+    let positions = [
+		Vec3::new(-2.0, -2.0, 0.0),
+		Vec3::new(-2.0, 2.0, 0.0),
+		Vec3::new(2.0, -2.0, 0.0),
+		Vec3::new(2.0, 2.0, 0.0),
+	];
+
+	let entities = positions.iter()
+		.map(|&pos| {
+			let transform =  Transform::new(
+				pos,
+				Quat::one(),
+				Vec3::new(1.0, 1.0, 1.0)
+			);
+
+			ModelSpawnBuilder::new(cesium_man_id)
+				.with_animation(AnimationSpec::Animated { skin_index: 0usize, anim_index: 0usize })
+				.spawn_at(world, transform)
+		})
+		.collect::<Result<Vec<_>>>()?;
+
+	Ok(entities)
 }
 
 //===============================================

@@ -189,7 +189,7 @@ pub fn update_skeletons_wrapped(
 
 /// Manage the spawn of one model type.
 pub struct ModelSpawnBuilder {
-	model_index: usize,
+	model_index: ModelId,
 
 	skin_index: Option<usize>,
 	anim_index: Option<usize>,
@@ -197,7 +197,7 @@ pub struct ModelSpawnBuilder {
 }
 
 impl ModelSpawnBuilder {
-	pub fn new(model_index: usize) -> Self {
+	pub fn new(model_index: ModelId) -> Self {
 		Self {
 			model_index,
 			skin_index: None,
@@ -249,7 +249,7 @@ impl ModelSpawnBuilder {
 			(
 				transform,
 				global_transform,
-				MeshHandle { model_id: ModelId(self.model_index) },
+				MeshHandle { model_id: self.model_index },
 			)
 		);
 

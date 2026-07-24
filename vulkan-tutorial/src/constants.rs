@@ -68,6 +68,11 @@ pub const DUCK_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/glTF/Duck.glb"
 pub const FLIGHT_HELM_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf";
 /// Cesium Man
 pub const CESIUM_MAN_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/CesiumMan/glTF/CesiumMan.gltf";
+/// To load multiple models, we can use a list of tuples with the path and the name of the model.
+pub const MODEL_INFO: [(&str, &str); 2] = [
+    (CESIUM_MAN_PATH, "CesiumMan"),
+    (FLIGHT_HELM_PATH, "FlightHelmet")
+];
 
 // 3 - Inputs
 pub const INPUT_PATH: &str = "config/input.toml";

@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use vulkanalia::prelude::v1_0::*;
 
 use crate::math::*;
-use crate::type_safety::MaterialId;
+use crate::type_safety::{MaterialId, TextureId};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -152,43 +152,43 @@ impl Hash for Vertex {
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Material {
-    pub base_color_factor: Vec4,
-    pub metallic_factor: f32,
-    pub roughness_factor: f32,
-    pub emissive_factor: Vec3,
+    pub base_color_factor:	Vec4,
+    pub metallic_factor:	f32,
+    pub roughness_factor:	f32,
+    pub emissive_factor:	Vec3,
 
     // Texture indices
-    pub base_color_texture_idx: i32,
-    pub metallic_roughness_texture_idx: i32,
-    pub normal_texture_idx: i32,
-    pub occlusion_texture_idx: i32,
-    pub emissive_texture_idx: i32,
+    pub base_color_texture_idx:			Option<TextureId>,
+    pub metallic_roughness_texture_idx:	Option<TextureId>,
+    pub normal_texture_idx:				Option<TextureId>,
+    pub occlusion_texture_idx:			Option<TextureId>,
+    pub emissive_texture_idx:			Option<TextureId>,
 
     // Texture sets (which UV to use)
-    pub base_color_texture_set: i32,
-    pub metallic_roughness_texture_set: i32,
-    pub normal_texture_set: i32,
-    pub occlusion_texture_set: i32,
-    pub emissive_texture_set: i32,
+    pub base_color_texture_set:			i32,
+    pub metallic_roughness_texture_set:	i32,
+    pub normal_texture_set:				i32,
+    pub occlusion_texture_set:			i32,
+    pub emissive_texture_set:			i32,
 
     // Alpha-mask
     pub alpha_mask: f32,
     pub alpha_mask_cutoff: f32,
 }
 
-impl Material {
-    pub const fn new() -> Self {
-        Material {
+impl Default for Material {
+	fn default() -> Self {
+		Material {
             base_color_factor: Vec4::new(1.0, 1.0, 1.0, 1.0),
             metallic_factor: 1.0,
             roughness_factor: 1.0,
             emissive_factor: Vec3::new(1.0, 1.0, 1.0),
 
-            base_color_texture_idx: -1,
-            metallic_roughness_texture_idx: -1,
-            normal_texture_idx: -1,
-            occlusion_texture_idx: -1,
-            emissive_texture_idx: -1,
+            base_color_texture_idx: None,
+            metallic_roughness_texture_idx: None,
+            normal_texture_idx: None,
+            occlusion_texture_idx: None,
+            emissive_texture_idx: None,
 
             base_color_texture_set: -1,
             metallic_roughness_texture_set: -1,
@@ -199,6 +199,16 @@ impl Material {
             alpha_mask: 0.0,
             alpha_mask_cutoff: 0.5,
         }
+	}
+}
+
+impl Material {
+    pub fn offset_texture_ids(&mut self, offset: TextureId) {
+        self.base_color_texture_idx			= self.base_color_texture_idx.map(|id| id + offset);
+        self.metallic_roughness_texture_idx	= self.metallic_roughness_texture_idx.map(|id| id + offset);
+        self.normal_texture_idx				= self.normal_texture_idx.map(|id| id + offset);
+        self.occlusion_texture_idx			= self.occlusion_texture_idx.map(|id| id + offset);
+        self.emissive_texture_idx			= self.emissive_texture_idx.map(|id| id + offset);
     }
 }
 

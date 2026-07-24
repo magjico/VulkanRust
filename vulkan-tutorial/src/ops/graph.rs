@@ -6,7 +6,7 @@ use std::slice::Iter;
 use crate::type_safety::NodeId;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node<T> {
 	pub parent: Option<NodeId>,
 	pub childs: Vec<NodeId>,
@@ -14,7 +14,7 @@ pub struct Node<T> {
 	pub value: T
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FlatGraph<T>(Vec<Node<T>>);
 
 impl<T> Default for FlatGraph<T> {

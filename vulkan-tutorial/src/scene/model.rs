@@ -3,10 +3,10 @@ use anyhow::{Result, anyhow};
 use cgmath::{Deg, Euler, Rad, VectorSpace};
 
 use crate::math::*;
+use crate::type_safety::*;
 use crate::ops::FlatGraph;
 use crate::assets::load_obj_model;
 use crate::ops::Node;
-use crate::type_safety::{NodeId, SkinId, MaterialId, AnimationId};
 
 use super::{Vertex, Mesh, Animation, Material, PathType};
 
@@ -105,7 +105,7 @@ impl Model {
 
 /// Structure that hold the data of a model-node in a scenegraph
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelNodeData {
     pub name: String,
     pub mesh: Option<Mesh>,
@@ -175,17 +175,33 @@ pub struct Skin {
     pub joints: Vec<NodeId>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelGraph {
-	pub graph:			FlatGraph<ModelNodeData>,
-    pub roots:			Vec<NodeId>,
-	materials:			Vec<Material>,
-	animations:			Vec<Animation>,
-	skins:				Vec<Skin>,
+	pub graph:		FlatGraph<ModelNodeData>,
+    pub roots:		Vec<NodeId>,
+	materials:		Vec<Material>,
+	animations:		Vec<Animation>,
+	skins:			Vec<Skin>,
 }
 
 impl ModelGraph {
-    pub fn find_node(self, name: &str) -> Option<NodeId> {
+	pub fn new(
+        graph: FlatGraph<ModelNodeData>,
+        roots: Vec<NodeId>,
+        materials: Vec<Material>,
+        animations: Vec<Animation>,
+        skins: Vec<Skin>,
+    ) -> Self {
+        Self {
+            graph,
+            roots,
+            materials,
+            animations,
+            skins,
+        }
+    }
+
+    pub fn find_node(&self, name: &str) -> Option<NodeId> {
         self.graph.get_iterator()
             .position(|node| node.value.name == name)
             .map(NodeId)
@@ -280,6 +296,12 @@ impl ModelGraph {
             }
         }
         Ok(())
+    }
+
+    pub fn offset_materials_texture_ids(&mut self, offset: TextureId) {
+        for material in &mut self.materials {
+            material.offset_texture_ids(offset);
+        }
     }
 
     pub fn get_debug_info(&self) -> Result<()> {
