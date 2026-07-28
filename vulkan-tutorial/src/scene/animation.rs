@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::slice::Iter;
 
 use crate::math::*;
-use crate::type_safety::{SamplerId, NodeId};
+use crate::type_safety::{AnimationId, NodeId, SamplerId, SkinId};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum PathType {
@@ -28,8 +28,8 @@ pub enum InterpolationType {
 /// - `Animated { skin_index, anim_index }` - Skin and animation.
 pub enum AnimationSpec {
 	None,
-	Idle { skin_index: usize },
-	Animated { skin_index: usize, anim_index: usize },
+	Idle { skin_id: SkinId },
+	Animated { skin_id: SkinId, anim_id: AnimationId },
 }
 
 

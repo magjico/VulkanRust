@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::slice::{Iter, IterMut};
 
 use bevy_ecs::prelude::*;
 use vulkanalia::prelude::v1_0::*;
@@ -33,6 +34,16 @@ impl ModelsStorage {
 	#[inline]
 	pub fn get_next_id(&self) -> ModelId {
 		ModelId(self.0.len())
+	}
+
+	#[inline]
+	pub fn iter(&self) -> Iter<'_, ModelGraph> {
+		self.0.iter()
+	}
+
+	#[inline]
+	pub fn iter_mut(&mut self) -> IterMut<'_, ModelGraph> {
+		self.0.iter_mut()
 	}
 
 	#[inline]

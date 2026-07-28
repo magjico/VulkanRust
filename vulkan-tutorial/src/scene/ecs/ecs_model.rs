@@ -189,27 +189,27 @@ pub fn update_skeletons_wrapped(
 
 /// Manage the spawn of one model type.
 pub struct ModelSpawnBuilder {
-	model_index: ModelId,
+	model_id: ModelId,
 
-	skin_index: Option<usize>,
-	anim_index: Option<usize>,
+	skin_id: Option<SkinId>,
+	anim_id: Option<AnimationId>,
 	anim_time: Option<f32>
 }
 
 impl ModelSpawnBuilder {
-	pub fn new(model_index: ModelId) -> Self {
+	pub fn new(model_id: ModelId) -> Self {
 		Self {
-			model_index,
-			skin_index: None,
-			anim_index: None,
+			model_id,
+			skin_id: None,
+			anim_id: None,
 			anim_time: None
 		}
 	}
 
 	pub fn with_animation(mut self, anim_specs: AnimationSpec) -> Self {
-		(self.skin_index, self.anim_index) = match anim_specs {
-			AnimationSpec::Idle { skin_index } => (Some(skin_index), None),
-			AnimationSpec::Animated { skin_index, anim_index } => (Some(skin_index), Some(anim_index)),
+		(self.skin_id, self.anim_id) = match anim_specs {
+			AnimationSpec::Idle { skin_id } => (Some(skin_id), None),
+			AnimationSpec::Animated { skin_id, anim_id } => (Some(skin_id), Some(anim_id)),
 			AnimationSpec::None => (None, None)
 		};
 		self
@@ -228,8 +228,8 @@ impl ModelSpawnBuilder {
 		let global_transform = GlobalTransform(transform.to_model_matrix());
 
 		// check if the entity have any skeleton
-		let skeleton = self.skin_index
-			.map(|skin_index| -> Result<SkeletonInstance> {
+		let skeleton = self.skin_id
+			.map(|skin_id| -> Result<SkeletonInstance> {
 				let mut ssbo_allocator = world.get_resource_mut::<SSBOSkiningAllocator>()
 					.ok_or_else(|| anyhow!("Cannot find a ssbo allocator to spawn model."))?;
 
@@ -237,8 +237,8 @@ impl ModelSpawnBuilder {
 					.ok_or_else(|| anyhow!("SSBO capacity exceeded - cannot allocatate skinning slot"))?;
 
 				Ok(SkeletonInstance {
-					skin_id:	SkinId(skin_index),
-					anim_id:	AnimationId(self.anim_index.unwrap_or(0)),
+					skin_id:	skin_id,
+					anim_id:	self.anim_id.unwrap_or(AnimationId(0)),
 					anim_time:	self.anim_time.unwrap_or(0.0),
 					ssbo_offset
 				})
@@ -249,7 +249,7 @@ impl ModelSpawnBuilder {
 			(
 				transform,
 				global_transform,
-				MeshHandle { model_id: self.model_index },
+				MeshHandle { model_id: self.model_id },
 			)
 		);
 

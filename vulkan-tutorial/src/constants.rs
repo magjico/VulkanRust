@@ -64,14 +64,17 @@ pub const MESH_PATH: &str = "resources/3D_meshes/viking_room.obj";
 // 2 - glb 
 /// Duck - mesh store with texture
 pub const DUCK_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/glTF/Duck.glb";
+pub const DUCK_KEY: &str = "Duck";
 /// Flying Helmet - texture separated from mesh
 pub const FLIGHT_HELM_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf";
+pub const FLIGHT_HELM_KEY: &str = "FlightHelmet";
 /// Cesium Man
 pub const CESIUM_MAN_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/CesiumMan/glTF/CesiumMan.gltf";
+pub const CESIUM_MAN_KEY: &str = "CesiumMan";
 /// To load multiple models, we can use a list of tuples with the path and the name of the model.
 pub const MODEL_INFO: [(&str, &str); 2] = [
-    (CESIUM_MAN_PATH, "CesiumMan"),
-    (FLIGHT_HELM_PATH, "FlightHelmet")
+    (CESIUM_MAN_PATH, CESIUM_MAN_KEY),
+    (FLIGHT_HELM_PATH, FLIGHT_HELM_KEY)
 ];
 
 // 3 - Inputs

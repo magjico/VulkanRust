@@ -30,9 +30,7 @@ use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesSto
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::assets::{load_gltf_model};
-use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, Mesh, ModelGraph,
-                    ModelsStorage, SkinningBuffer};
+use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, Mesh, ModelGraph, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
 use crate::math::{Mat4, Vec3, Vec4};
 
 //===================================================
@@ -286,66 +284,71 @@ impl App {
             FRAG
         )?;
         
-        // load .glb model
-        let (cesium_man_model, cesium_man_textures) = load_gltf_model(
-            &device,
-            &instance,
-            physical_device,
-            CESIUM_MAN_PATH,
-            command_data.setup_command_buffer,
-            graphics_queue
-        )?;
+		// 8 - 9. load .glb models and textures
+		let mut models = ModelsStorage(Vec::new());
+		let mut textures = TexturesStorage(Vec::new());
+		let mut model_registry = ModelRegistry { entries: HashMap::new() };
 
-        // 9. texture
-        let textures_data = cesium_man_textures;
+		load_gltf_models(
+			&device,
+			&instance,
+			physical_device,
+			command_data.setup_command_buffer,
+			graphics_queue,
+			&mut models,
+			&mut textures,
+			&mut model_registry
+		)?;
 
-        let default_texture = create_default_texture(
-            &instance,
-            &device,
-            physical_device,
-            command_data.setup_command_buffer,
-            graphics_queue
-        )?;
-
-        // 10. model
-        let mut models_data = cesium_man_model;
+		let default_texture = create_default_texture(
+			&instance,
+			&device,
+			physical_device,
+			command_data.setup_command_buffer,
+			graphics_queue
+		)?;
 
         // 11. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
             physical_device,
-            &models_data,
+            &models,
             command_data.setup_command_buffer,
             graphics_queue,
             swapchain_data.swapchain_images.len(),
         )?;
 
+		// 12. lights
         // TODO: implement multiple type of light
         let lights = create_default_lightning(&instance, &device, physical_device)?;
 
-        // 12. descriptor
+        // 13. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
             &ecs_context,
             &descriptor_layout_data,
             &buffers_data.uniform_buffers,
-            &textures_data,
+            &textures,
             &default_texture,
-            &models_data.materials,
-            &mut models_data.skins,
+            &models,
             &lights,
             swapchain_data.swapchain_images.len(),
         )?;
         
-        // 13. sync
+		// 14. ECS - final init + instance spawn
+		ecs_context.world.insert_resource(models);
+		ecs_context.world.insert_resource(Time(0.0));
+		spawn_from_cesium_man_instances(&mut ecs_context.world, &model_registry)?;
+
+        // 14. sync
         let sync_data = SyncData::create(
             &device,
             MAX_FRAMES_IN_FLIGHT,
             swapchain_data.swapchain_images.len(),
         )?;
 
-        // 14. Camera
+        // 15. Camera
         // TODO: support multiple cameras
         let mut camera = CameraBuilder::new()
             .movement_speed(10.0)
@@ -361,12 +364,11 @@ impl App {
             swapchain_data,
             descriptor_layout_data,
             pipeline_data,
-            models_data,
             buffers_data,
             descriptor_data,
             command_data,
             sync_data,
-            textures_data,
+            textures_data: textures,
             depth_data,
             color_data,
             camera_data: camera,
@@ -402,10 +404,13 @@ impl App {
         self.destroy_swapchain();
 
         // Destroy Appdata
-        self.data.textures_data.iter_mut().for_each(|t| t.destroy(&self.device));
+		if let Some(skinning_buffer) = self.ecs_context.world.get_resource::<SkinningBuffer>() {
+			skinning_buffer.destroy(&self.device);
+		}
+
+        self.data.textures_data.destroy(&self.device);
         self.data.default_texture.destroy(&self.device);
         self.data.light_data.destroy(&self.device);
-        self.data.models_data.destroy(&self.device);
         
         self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         self.data.descriptor_layout_data.destroy(&self.device);
@@ -541,7 +546,7 @@ impl App {
         // Update commands buffers
         self.data.command_data.update_command_buffer(
             &self.device,
-            &self.data.models_data,
+			&mut self.ecs_context,
             &self.data.pipeline_data,
             &self.data.buffers_data,
             &self.data.swapchain_data,
@@ -550,7 +555,6 @@ impl App {
             &self.data.descriptor_data,
             self.data.device_data.msaa_samples,
             image_index,
-            self.frame,
         )?;
 
         // Update UBO
@@ -659,8 +663,6 @@ pub struct AppData {
     // Pipeline
     pub descriptor_layout_data: DescriptorLayoutData,
     pub pipeline_data: PipelineData,
-    // Models
-    pub models_data: ModelsStorage,
     // Textures
 	pub textures_data: TexturesStorage,
     // Buffers
@@ -822,7 +824,7 @@ impl BuffersData {
         instance: &Instance,
         device: &Device,
         physical_device: vk::PhysicalDevice,
-        models: &[ModelGraph],
+        models: &ModelsStorage,
         setup_command_buffer: vk::CommandBuffer,
         graphics_queue: vk::Queue,
         images_count: usize,
@@ -831,8 +833,8 @@ impl BuffersData {
         let mut indices = Vec::new();
         let mut mesh_offsets = HashMap::new();
 
-        for (model_idx, model) in models.iter().enumerate() {
-            let model_id = ModelId(model_idx);
+        for (model_id, model) in models.iter().enumerate() {
+            let model_id = ModelId(model_id);
 
             for (node_idx, node) in model.graph.get_iterator().enumerate() {
                 if let Some(mesh) = &node.value.mesh {
@@ -916,13 +918,17 @@ impl DescriptorData {
         ecs_context: &ECSContext,
         descriptor_layout_data: &DescriptorLayoutData,
         uniform_buffers: &[vk::Buffer],
-        textures_data: &[TextureData],
+        textures: &TexturesStorage,
         default_texture: &TextureData,
-        materials_data: &[Material],
+		models: &ModelsStorage,
         light_buffer: &LightBuffer,
         images_count: usize,
     ) -> Result<Self> {
-        let materials_count = materials_data.len();
+		let materials: Vec<&Material> = models.iter()
+			.flat_map(|model| model.materials_iter())
+			.collect();
+        let materials_count = materials.len();
+
         let skinning_buffer = ecs_context.world.get_resource::<SkinningBuffer>()
             .ok_or_else(|| anyhow!("Skinning Buffer not found in ecs_context.world"))?;
 
@@ -945,8 +951,8 @@ impl DescriptorData {
             device,
             descriptor_layout_data.material_set_layout,
             descriptor_pool,
-            materials_data,
-            textures_data,
+            &materials,
+            textures,
             default_texture
         )?;
 
@@ -1035,7 +1041,6 @@ impl CommandData {
         &mut self,
         device: &Device,
         ecs_context: &mut ECSContext,
-        models: &ModelsStorage,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_data: &SwapchainData,
@@ -1107,10 +1112,11 @@ impl CommandData {
         unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
 
         let mut secondary_command_buffers = Vec::new();
-        let mut query = ecs_context.get_renderable_query();
+        let models = ecs_context.world.get_resource::<ModelsStorage>()
+            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
 
         let mut draw_index: usize = 0;
-        for (global, mesh_handle, skeleton) in query.iter(&ecs_context.world) {
+        for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
             let model = models.get_model(mesh_handle.model_id);
             let ssbo_offset = skeleton.map(|s| s.ssbo_offset).unwrap_or(PushConstants::NO_SKIN);
 

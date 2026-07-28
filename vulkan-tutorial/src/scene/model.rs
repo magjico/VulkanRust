@@ -1,3 +1,5 @@
+use std::slice::{Iter, IterMut};
+
 use log::*;
 use anyhow::{Result, anyhow};
 use cgmath::{Deg, Euler, Rad, VectorSpace};
@@ -201,6 +203,7 @@ impl ModelGraph {
         }
     }
 
+    #[inline]
     pub fn find_node(&self, name: &str) -> Option<NodeId> {
         self.graph.get_iterator()
             .position(|node| node.value.name == name)
@@ -246,6 +249,30 @@ impl ModelGraph {
     pub fn get_animation(&self, animation_id: AnimationId) -> &Animation {
 		&self.animations[animation_id.0]
 	}
+    #[inline]
+    pub fn skins_iter(&self) -> Iter<'_, Skin> {
+        self.skins.iter()
+    }
+    #[inline]
+    pub fn skins_iter_mut(&mut self) -> IterMut<'_, Skin> {
+        self.skins.iter_mut()
+    }
+    #[inline]
+    pub fn materials_iter(&self) -> Iter<'_, Material> {
+        self.materials.iter()
+    }
+    #[inline]
+    pub fn materials_iter_mut(&mut self) -> IterMut<'_, Material> {
+        self.materials.iter_mut()
+    }
+    #[inline]
+    pub fn animations_iter(&self) -> Iter<'_, Animation> {
+        self.animations.iter()
+    }
+    #[inline]
+    pub fn animations_iter_mut(&mut self) -> IterMut<'_, Animation> {
+        self.animations.iter_mut()
+    }
 
     pub fn apply_pose(
         &mut self,

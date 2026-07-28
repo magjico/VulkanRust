@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(pub usize);
 
@@ -30,5 +32,11 @@ impl std::ops::Add<TextureId> for TextureId {
 
 	fn add(self, rhs: TextureId) -> Self::Output {
 		TextureId(self.0 + rhs.0)
+	}
+}
+
+impl Display for TextureId {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}", self.0)
 	}
 }

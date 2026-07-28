@@ -775,7 +775,7 @@ pub fn load_model_with_offset(
         device, instance, physical_device, path, setup_command_buffer, graphics_queue,
     )?;
 
-    let texture_id =register_model_textures(textures, &mut model_graph, model_textures);
+    let texture_id = register_model_textures(textures, &mut model_graph, model_textures);
     let model_id = models.push(model_graph);
     
     registry.entries.insert(name.to_string(), ModelAssets { model_id, texture_id });

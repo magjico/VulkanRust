@@ -1,4 +1,5 @@
 //! Setup multiple **specific** app objects
+use anyhow::anyhow;
 use cgmath::One;
 use rand::RngExt;
 use log::*;
@@ -8,7 +9,7 @@ use vulkanalia::prelude::v1_0::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 
-use crate::assets::load_gltf_model;
+use crate::assets::load_model_with_offset;
 use crate::ops::SlotAllocator;
 use crate::math::*;
 use crate::render::*;
@@ -132,7 +133,7 @@ pub fn create_global_descriptor_sets(
 /// - `material_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_material_set_layout].
 /// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
 /// - materials (&\[[Material]]),
-/// - textures (&\[[TextureData]]),
+/// - textures (&[TexturesStorage]),
 /// - default_texture (&[TextureData]),
 /// 
 /// ## Returns
@@ -142,8 +143,8 @@ pub fn create_material_descriptor_sets(
     device: &Device,
     material_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
-    materials: &[Material],
-    textures: &[TextureData],
+    materials: &[&Material],
+    textures: &TexturesStorage,
     default_texture: &TextureData,
 ) -> Result<Vec<vk::DescriptorSet>> {
     let layouts = vec![material_set_layout; materials.len()];
@@ -156,12 +157,16 @@ pub fn create_material_descriptor_sets(
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
 
     // helper function to get texture or the default one
-    let get_texture = |idx: i32| -> &TextureData {
-        if idx >= 0 && textures.len() > idx as usize { &textures[idx as usize] } else { default_texture } 
+    let get_texture = |id: Option<TextureId>| -> &TextureData {
+        if let Some(id) = id {
+            textures.get_texture(id)
+        } else {
+            default_texture
+        }
     };
 
     for (i, material) in materials.iter().enumerate() {
-        debug!("material indices:\n\t- base = {}\n\t- metallic = {}\n\t- normal = {}\n\t- occlusion = {}\n\t- emissive = {}",
+        debug!("material indices:\n\t- base = {:?}\n\t- metallic = {:?}\n\t- normal = {:?}\n\t- occlusion = {:?}\n\t- emissive = {:?}",
             material.base_color_texture_idx,
             material.metallic_roughness_texture_idx,
             material.normal_texture_idx,
@@ -380,12 +385,18 @@ pub fn load_gltf_models(
     model_registry: &mut ModelRegistry,
 ) -> Result<()> {
     for (model_path, model_key) in MODEL_INFO.iter() {
-        let (model_graph, model_textures) = load_gltf_model(
-            device, instance, physical_device, model_path, setup_command_buffer, graphics_queue
+        load_model_with_offset(
+            device,
+            instance,
+            physical_device,
+            *model_path,
+            *model_key,
+            setup_command_buffer,
+            graphics_queue,
+            models,
+            textures,
+            model_registry
         )?;
-
-        let model_id = models.push(model_graph);
-
     }
 
 	Ok(())
@@ -395,8 +406,11 @@ pub fn load_gltf_models(
 /// spawn 4 models with the bevy ecs systems
 pub fn spawn_from_cesium_man_instances(
 	world: &mut World,
-	cesium_man_id: ModelId,
+    model_registry: &ModelRegistry
 ) -> Result<Vec<Entity>> {
+    let cesium_assets = model_registry.entries.get(CESIUM_MAN_KEY)
+        .ok_or_else(|| anyhow!("key <{}> not found in registry", CESIUM_MAN_KEY))?;
+
     let positions = [
 		Vec3::new(-2.0, -2.0, 0.0),
 		Vec3::new(-2.0, 2.0, 0.0),
@@ -412,8 +426,8 @@ pub fn spawn_from_cesium_man_instances(
 				Vec3::new(1.0, 1.0, 1.0)
 			);
 
-			ModelSpawnBuilder::new(cesium_man_id)
-				.with_animation(AnimationSpec::Animated { skin_index: 0usize, anim_index: 0usize })
+			ModelSpawnBuilder::new(cesium_assets.model_id)
+				.with_animation(AnimationSpec::Animated { skin_id: SkinId(0), anim_id: AnimationId(0) })
 				.spawn_at(world, transform)
 		})
 		.collect::<Result<Vec<_>>>()?;

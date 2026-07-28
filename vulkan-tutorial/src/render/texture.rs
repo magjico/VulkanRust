@@ -1,4 +1,5 @@
 use std::ptr::copy_nonoverlapping as memcpy;
+use std::slice::{Iter, IterMut};
 
 use anyhow::{Result, anyhow};
 
@@ -37,6 +38,11 @@ pub struct TexturesStorage(pub Vec<TextureData>);
 
 impl TexturesStorage {
     #[inline]
+    pub fn get_length(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
     pub fn get_texture(&self, texture_id: TextureId) -> &TextureData {
         self.0.get(texture_id.0)
             .unwrap_or_else(|| panic!("texture id ({}) out of bounds for length {}", texture_id.0, self.0.len()))
@@ -59,6 +65,22 @@ impl TexturesStorage {
         let id = self.get_next_id();
         self.0.extend(textures);
         id
+    }
+
+    #[inline]
+    pub fn iter(&self) -> Iter<'_, TextureData> {
+        self.0.iter()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> IterMut<'_, TextureData> {
+        self.0.iter_mut()
+    }
+
+    #[inline]
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&mut self, device: &Device) {
+        self.iter_mut().for_each(|texture_data| texture_data.destroy(device));
     }
 }
 
