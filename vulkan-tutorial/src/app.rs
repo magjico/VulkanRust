@@ -4,8 +4,6 @@ use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
-use log::*;
-
 use winit::dpi::LogicalSize;
 use winit::application::ApplicationHandler;
 use winit::window::{Window, WindowId};
@@ -98,15 +96,14 @@ impl ApplicationHandler for AppManager {
 				.unwrap_or(0.0);
 			self.last_frame_time = Some(now);
 
-            // animations
-            app.data.models_data.update_animations(delta_time);
+            let ECSContext { world, schedule, .. } = &mut app.ecs_context;
 
-            // skinning (prepare)
-            for skin in &mut app.data.models_data.skins {
-                if let Err(e) = skin.update_ssbo(&app.device, app.frame) {
-                    warn!("Failed to update skin SSBO: {}", e);
-                }
+            // ECS - update time then execute the schedule
+            if let Some(mut ecs_time) = world.get_resource_mut::<Time>() {
+                ecs_time.0 = delta_time;
             }
+
+            schedule.run(world);
 
             //  cameras
 			for (keycode, action) in &app.input_binding.camera_bindings {
@@ -599,14 +596,6 @@ impl App {
     }
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        // debug!("camera info:\n- position: {:?}\n- front: {:?}\n- right {:?}\n- up: {:?}\n- zoom: {:?}°",
-        //     self.data.camera_data.get_position(),
-        //     self.data.camera_data.get_front(),
-        //     self.data.camera_data.get_right(),
-        //     self.data.camera_data.get_up(),
-        //     self.data.camera_data.get_zoom()
-        // );
-
         let view = self.data.camera_data.get_view_matrix();
 
         let proj = CORRECTION * self.data.camera_data.get_projection_matrix(
