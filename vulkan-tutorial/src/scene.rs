@@ -42,6 +42,7 @@ pub use ecs::ModelSpawnBuilder;
 pub use ecs::MeshHandle;
 pub use ecs::SkeletonInstance;
 pub use ecs::ECSContext;
+pub use ecs::VulkanDevice;
 pub use ecs::propagate_transforms_from_root;
 pub use ecs::propagate_transforms_to_children;
 pub use ecs::update_skeletons;

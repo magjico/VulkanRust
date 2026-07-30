@@ -8,10 +8,23 @@ use crate::constants::MAX_TOTAL_JOINTS;
 use crate::math::Mat4;
 use crate::resources::create_buffer;
 
+/// A skinning buffer structre
+/// 
+/// ## Fields
+/// 
+/// - `buffer` ( [vk::Buffer] ) - The container (buffer).
+/// - `memory` ( [vk::DeviceMemory] ) - The buffer memory (IS HOST COHERENT).
+/// - `mapped` ( `*mut Mat4` ) - Pointer to the skin matrices map in memory. We need that because
+/// "mapping the same [vk::DeviceMemory] block multiple times is illegal - only one mapping at a time is allowed.
+/// This includes mapping disjoint regions. Mapping is not reference-counted internally by Vulkan.
+/// It is also not thread-safe."
+/// see *https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/memory_mapping.html*
 #[derive(Resource)]
 pub struct SkinningBuffer {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
+    
+    mapped: *mut Mat4,
 }
 
 impl SkinningBuffer {
@@ -31,32 +44,29 @@ impl SkinningBuffer {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         )?;
 
+        let mapped = unsafe {
+            let ptr = device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty())?;
+            std::ptr::write_bytes(ptr.cast::<u8>(), 0, size as usize);
+            ptr.cast::<Mat4>()
+        };
+
         Ok(Self {
             buffer,
-            memory
+            memory,
+            mapped
         })
     }
 
-    pub fn write_slice(
-        &self,
-        device: &Device,
-        offset: u32,
-        joint_matrices: &[Mat4]
-    ) -> Result<()> {
-        let byte_offset = (offset as usize * size_of::<Mat4>()) as vk::DeviceSize;
-        let size = (joint_matrices.len() * size_of::<Mat4>()) as vk::DeviceSize;
-
+    pub fn write_slice(&self, offset: u32, matrices: &[Mat4]) -> Result<()> {
         unsafe {
-            let ptr = device.map_memory(self.memory, byte_offset, size, vk::MemoryMapFlags::empty())? as *mut u8;
-            memcpy(joint_matrices.as_ptr() as *const u8, ptr, joint_matrices.len());
-            device.unmap_memory(self.memory);
+            memcpy(matrices.as_ptr(), self.mapped.add(offset as usize), matrices.len());
         }
-
         Ok(())
     }
 
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
+        device.unmap_memory(self.memory);
 		device.destroy_buffer(self.buffer, None);
 		device.free_memory(self.memory, None);
 	}
@@ -64,3 +74,10 @@ impl SkinningBuffer {
     #[inline]
     pub fn get_range() -> vk::DeviceSize { (MAX_TOTAL_JOINTS * size_of::<Mat4>()) as vk::DeviceSize }
 }
+
+// Send and Sync are justified: the mapped pointer will be valid for all SkinningBuffer lifetime (map in new, unmap in destroy)
+// NO DANGLING. And memory is "HOST_COHERENT" => no manual flush / invalidate to do
+// Only `update_skeletons` writes to it, and bevy_ecs guarantees a single system instance at a time.
+// TODO: Revisit if skinning writes ever become multi-threaded.
+unsafe impl Send for SkinningBuffer {}
+unsafe impl Sync for SkinningBuffer {}

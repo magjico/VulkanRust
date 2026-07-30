@@ -72,9 +72,9 @@ pub const FLIGHT_HELM_KEY: &str = "FlightHelmet";
 pub const CESIUM_MAN_PATH: &str = "resources/glb/glTF-Sample-Models/2.0/CesiumMan/glTF/CesiumMan.gltf";
 pub const CESIUM_MAN_KEY: &str = "CesiumMan";
 /// To load multiple models, we can use a list of tuples with the path and the name of the model.
-pub const MODEL_INFO: [(&str, &str); 2] = [
+pub const MODEL_INFO: [(&str, &str); 1] = [
     (CESIUM_MAN_PATH, CESIUM_MAN_KEY),
-    (FLIGHT_HELM_PATH, FLIGHT_HELM_KEY)
+    // (FLIGHT_HELM_PATH, FLIGHT_HELM_KEY)
 ];
 
 // 3 - Inputs

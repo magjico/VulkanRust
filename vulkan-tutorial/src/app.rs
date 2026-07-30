@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use log::*;
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -348,11 +349,12 @@ impl App {
         // 15. Camera
         // TODO: support multiple cameras
         let mut camera = CameraBuilder::new()
+            .position(Vec3::new(0.0,8.0, 4.0))
             .movement_speed(10.0)
             .mouse_sensitivity(0.02)
             .build();
 
-        camera.look_at(Vec3::new(0.0, 0.0, 0.0), None);
+        camera.look_at(Vec3::new(0.0, 0.0, 0.75), None);
 
 
         let data = AppData {
@@ -945,8 +947,7 @@ impl DescriptorData {
             default_texture
         )?;
 
-
-
+        debug!("descriptor points to buffer {:?}", skinning_buffer.buffer);
         let skinning_descriptor_set = create_skinning_descriptor_set(
             device,
             descriptor_layout_data.skin_set_layout,

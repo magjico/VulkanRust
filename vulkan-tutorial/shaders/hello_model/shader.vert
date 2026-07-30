@@ -66,5 +66,7 @@ void main() {
     fragTangent = vec4(normalize(normalMat * inTangent.xyz), inTangent.w);
     // fragColor = inColor;
     
+    float scale = (joints.length() == 16384) ? 1.0 : 3.0;
+    // gl_Position = ubo.proj * ubo.view * pcs.model * vec4(inPosition * scale, 1.0);
     gl_Position = ubo.proj * ubo.view * worldPos;
 }

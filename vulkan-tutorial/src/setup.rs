@@ -229,6 +229,8 @@ pub fn create_skinning_descriptor_set(
             .range(SkinningBuffer::get_range())
     ];
 
+    // debug!("buffer size = {}, descriptor range = {}", size, SkinningBuffer::get_range());
+
     let ssbo_write = vk::WriteDescriptorSet::builder()
         .dst_set(descriptor_set)
         .dst_binding(0)
@@ -307,6 +309,7 @@ pub fn init_ecs_context(
     let skinning_buff = SkinningBuffer::create(instance, device, physical_device)?;
 
     // world
+    ecs_context.world.insert_resource(VulkanDevice(device.clone()));
     ecs_context.world.insert_resource(skinning_buff);
 	ecs_context.world.insert_resource(SSBOSkiningAllocator(SlotAllocator::new(MAX_INSTANCES, MAX_JOINT_PER_INSTANCE)));
 	ecs_context.world.insert_resource(Time::default());
