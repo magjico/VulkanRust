@@ -29,7 +29,8 @@ use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesSto
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, Mesh, ModelGraph, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
+use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, ModelGraph, ModelRegistry,
+                    ModelsStorage, Primitive, SkinningBuffer, Time};
 use crate::math::{Mat4, Vec3, Vec4};
 
 //===================================================
@@ -306,7 +307,7 @@ impl App {
 			graphics_queue
 		)?;
 
-        // 11. buffers
+        // 10. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
@@ -317,11 +318,11 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
 
-		// 12. lights
+		// 11. lights
         // TODO: implement multiple type of light
         let lights = create_default_lightning(&instance, &device, physical_device)?;
 
-        // 13. descriptor
+        // 12. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
             &ecs_context,
@@ -334,7 +335,7 @@ impl App {
             swapchain_data.swapchain_images.len(),
         )?;
         
-		// 14. ECS - final init + instance spawn
+		// 13. ECS - final init + instance spawn
 		ecs_context.world.insert_resource(models);
 		ecs_context.world.insert_resource(Time(0.0));
 		spawn_from_cesium_man_instances(&mut ecs_context.world, &model_registry)?;
@@ -1116,31 +1117,34 @@ impl CommandData {
                 let Some(mesh) = &node.value.mesh else { continue };
                 let node_id = NodeId(i);
                 let final_model = global.0  * model.get_global_matrix_of(node_id);
+                let mesh_offset = *buffers_data.mesh_offsets.get(&(mesh_handle.model_id, node_id))
+                    .unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", mesh_handle.model_id, node_id));
 
-                let material_set_id = mesh.material_id
-                    .map(|id| id + material_offset)
-                    .unwrap_or(MaterialId(0));
+                for primitive in &mesh.primitives {
+                    let material_set_id = primitive.material_id
+                        .map(|id| id + material_offset)
+                        .unwrap_or(MaterialId(0));
 
-                secondary_command_buffers.push(self.update_secondary_command_buffers(
-                    device,
-                    mesh,
-                    final_model,
-                    ssbo_offset,
-                    model,
-                    pipeline_data,
-                    buffers_data,
-                    &[swapchain_data.swapchain_format],
-                    depth_data,
-                    descriptor_data,
-                    msaa_samples,
-                    mesh_handle.model_id,
-                    node_id,
-                    material_set_id,
-                    image_index,
-                    draw_index,
-                )?);
+                    secondary_command_buffers.push(self.update_secondary_command_buffers(
+                        device,
+                        primitive,
+                        mesh_offset,
+                        final_model,
+                        ssbo_offset,
+                        model,
+                        pipeline_data,
+                        buffers_data,
+                        &[swapchain_data.swapchain_format],
+                        depth_data,
+                        descriptor_data,
+                        msaa_samples,
+                        material_set_id,
+                        image_index,
+                        draw_index,
+                    )?);
 
-                draw_index += 1;
+                    draw_index += 1;
+                }
             }
         }
 
@@ -1163,7 +1167,8 @@ impl CommandData {
     pub fn update_secondary_command_buffers(
         &mut self,
         device: &Device,
-        mesh: &Mesh,
+        primitive: &Primitive,
+        mesh_offset: MeshOffset,
         final_model: Mat4,
         ssbo_offset: u32,
         model: &ModelGraph,
@@ -1173,8 +1178,6 @@ impl CommandData {
         depth_data: &DepthData,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
-        model_id: ModelId,
-        node_id: NodeId,
         material_set_id: MaterialId,
         image_index: usize,
         draw_index: usize
@@ -1197,7 +1200,7 @@ impl CommandData {
         let command_buffer = command_buffers[draw_index];
         
         let material = {
-            if let Some(material_id) = mesh.material_id {
+            if let Some(material_id) = primitive.material_id {
                 Some(model.get_material(material_id))
             } else {
                 None
@@ -1303,17 +1306,13 @@ impl CommandData {
                 frag_offset,
                 &push_bytes[frag_offset as usize..],
             );
-            
-            let offset = buffers_data.mesh_offsets.get(&(model_id, node_id))
-                .copied()
-                .unwrap_or(MeshOffset { vertex_offset: 0, first_index: 0 });
 
             device.cmd_draw_indexed(
                 command_buffer,
-                mesh.indices.len() as u32,
+                primitive.index_count,
                 1,
-                offset.first_index,
-                offset.vertex_offset as i32,
+                mesh_offset.first_index + primitive.first_index,
+                mesh_offset.vertex_offset as i32,
                 0
             );
             device.end_command_buffer(command_buffer)?;

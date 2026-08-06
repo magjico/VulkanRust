@@ -8,6 +8,7 @@ mod ecs;
 pub use geometry::Vertex;
 pub use geometry::Material;
 pub use geometry::Mesh;
+pub use geometry::Primitive;
 
 pub use model::NodeTransform;
 pub use model::ModelGraph;

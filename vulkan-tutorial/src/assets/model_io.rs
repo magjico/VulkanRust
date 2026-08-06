@@ -155,7 +155,7 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
         }
     }
 
-    Ok(Mesh {vertices, indices, material_id: None})
+    Ok(Mesh {vertices, indices, ..Default::default()})
 }
 
 pub fn load_3d_content(
@@ -677,7 +677,9 @@ pub fn load_gltf_model(
 
                 if let Some(iter) = reader.read_indices() {
                     let vertex_base = mesh.vertices.len() as u32;
-                    mesh.material_id = primitive.material().index().map(|i| Some(MaterialId(i))).unwrap_or(None);
+                    let first_index = mesh.indices.len() as u32;
+
+                    // mesh.material_id = primitive.material().index().map(|i| Some(MaterialId(i))).unwrap_or(None);
 
                     let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
@@ -707,7 +709,17 @@ pub fn load_gltf_model(
                         });
                     }
 
-                    mesh.indices.extend(iter.into_u32().map(|i| i + vertex_base));
+                    let indices: Vec<u32> = iter.into_u32().map(|i| i + vertex_base).collect();
+                    let index_count = indices.len() as u32;
+                    mesh.indices.extend(indices);
+
+                    mesh.primitives.push(
+                        Primitive { 
+                            first_index,
+                            index_count,
+                            material_id: primitive.material().index().map(MaterialId),
+                        }
+                    );
                 }
                 else {
                     warn!("Primitive without index; skipping.")

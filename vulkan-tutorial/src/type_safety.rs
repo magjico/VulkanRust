@@ -21,7 +21,7 @@ pub struct ModelId(pub usize);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TextureId(pub usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct MeshOffset {
 	pub vertex_offset: u32,
 	pub first_index: u32

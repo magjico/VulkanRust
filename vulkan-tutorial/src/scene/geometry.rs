@@ -214,10 +214,18 @@ impl Material {
 
 #[repr(C)]
 #[derive(Clone, Debug)]
+pub struct Primitive {
+    pub first_index: u32,
+    pub index_count: u32,
+    pub material_id: Option<MaterialId>,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub material_id: Option<MaterialId>,
+    pub primitives: Vec<Primitive>,
 }
 
 // TODO: mesh builder struct ?
@@ -226,7 +234,7 @@ impl Default for Mesh {
         Self {
             vertices: Vec::new(),
             indices: Vec::new(),
-            material_id: None
+            primitives: Vec::new(),
         }
     }
 }
