@@ -27,6 +27,14 @@ pub struct MeshOffset {
 	pub first_index: u32
 }
 
+impl std::ops::Add<MaterialId> for MaterialId {
+	type Output = MaterialId;
+
+	fn add(self, rhs: MaterialId) -> Self::Output {
+		MaterialId(self.0 + rhs.0)
+	}
+}
+
 impl std::ops::Add<TextureId> for TextureId {
 	type Output = TextureId;
 

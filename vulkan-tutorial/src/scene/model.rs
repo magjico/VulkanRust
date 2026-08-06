@@ -2,108 +2,108 @@ use std::slice::{Iter, IterMut};
 
 use log::*;
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, Euler, Rad, VectorSpace};
+use cgmath::VectorSpace;
 
 use crate::math::*;
 use crate::type_safety::*;
-use crate::ops::FlatGraph;
-use crate::assets::load_obj_model;
-use crate::ops::Node;
+use crate::ops::{FlatGraph, Node};
 
-use super::{Vertex, Mesh, Animation, Material, PathType};
+use super::{Mesh, Animation, Material, PathType};
 
-//===============================================
-// Model-Instance 
-//===============================================
+// region Model-Graph
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct ModelInstance {
-    pub position: Vec3,
-    pub rotation: Quat,
-    pub scale: Vec3,
+/// Describe a type of model node transformation for animation
+#[derive(Debug, Clone, Copy)]
+pub enum NodeTransform {
+    Trs { translation: Vec3, rotation: Quat, scale: Vec3 },
+    Matrix(Mat4),
 }
 
-impl ModelInstance {
-    pub const fn new(position: Vec3, rotation: Quat, scale: Vec3) -> Self {
-        Self {
-            position,
-            rotation,
-            scale,
+impl NodeTransform {
+    pub fn get_matrix(&self) -> Mat4 {
+        match self {
+            NodeTransform::Trs { translation, rotation, scale } => {
+                Mat4::from_translation(*translation)
+                    * Mat4::from(*rotation)
+                    * Mat4::from_nonuniform_scale(scale.x, scale.y, scale.z)
+            }
+            NodeTransform::Matrix(m) => *m
         }
     }
 
-    pub fn from_radians(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
-        Self {
-            position,
-            rotation: Quat::from(Euler {
-                x: Rad(rotation.x),
-                y: Rad(rotation.y),
-                z: Rad(rotation.z),
-            }),
-            scale
+    pub fn get_trs(&self) -> (Vec3, Quat, Vec3) {
+        match self {
+            NodeTransform::Trs { translation, rotation, scale }
+                => (*translation, *rotation, *scale),
+            NodeTransform::Matrix(m) => decompose(m)
         }
     }
 
-    pub fn from_degrees(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
-        Self {
-            position,
-            rotation: Quat::from(Euler {
-                x: Deg(rotation.x),
-                y: Deg(rotation.y),
-                z: Deg(rotation.z)
-            }),
-            scale
+    pub fn get_scale(&self) -> Vec3 {
+        match self {
+            NodeTransform::Trs { scale, .. } => *scale,
+            NodeTransform::Matrix(m) => extract_scale_from_mat4(&m),
         }
     }
 
-    pub fn to_model_matrix(&self) -> Mat4 {
-        let translation = Mat4::from_translation(self.position);
-        let rotation = Mat4::from(self.rotation); 
-        let scale = Mat4::from_nonuniform_scale(
-            self.scale.x,
-            self.scale.y,
-            self.scale.z,
-        );
-
-        translation * rotation * scale
-    }
-}
-
-
-#[derive(Clone, Debug)]
-pub struct Model {
-    pub mesh: Mesh,
-    pub instances: Vec<ModelInstance>
-}
-
-impl Model {
-    pub fn create(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
-        Self {
-            mesh: Mesh { vertices, indices, material_index: None },
-            instances: Vec::new()
+    pub fn set_translation(&mut self, trans: Vec3) {
+        match self {
+            NodeTransform::Trs { translation, .. } => *translation = trans,
+            NodeTransform::Matrix(m) => {
+                warn!("<set_translation> - animating a node with a matrix transform — glTF spec violation, writing directly into matrix transform");
+                m.w.x = trans.x;
+                m.w.y = trans.y;
+                m.w.z = trans.z;
+            }
         }
     }
 
-    pub fn create_with_obj(obj_path: &str) -> Result<Self> {
-        Ok( Self {
-            mesh: load_obj_model(obj_path)?,
-            instances: Vec::new(),
-        })
+    pub fn set_rotation(&mut self, rot: Quat) {
+        let scale = self.get_scale();
+
+        match self {
+            NodeTransform::Trs { rotation, .. } => *rotation = rot,
+            NodeTransform::Matrix(m) => {     
+                warn!("<set_rotation> - animating a node with a matrix transform — glTF spec violation, writing directly into matrix transform");   
+                let rotation = Mat3::from(rot);
+
+                m.x.x = rotation.x.x * scale.x;
+                m.x.y = rotation.x.y * scale.x;
+                m.x.z = rotation.x.z * scale.x;
+
+                m.y.x = rotation.y.x * scale.y;
+                m.y.y = rotation.y.y * scale.y;
+                m.y.z = rotation.y.z * scale.y;
+
+                m.z.x = rotation.z.x * scale.z;
+                m.z.y = rotation.z.y * scale.z;
+                m.z.z = rotation.z.z * scale.z;
+            }
+        }
     }
 
-    pub fn add_instance(&mut self, instance: ModelInstance) {
-        self.instances.push(instance);
-    }
+    pub fn set_scale(&mut self, scl: Vec3) {
+        match self {
+            NodeTransform::Trs { scale, .. } => *scale = scl,
+            NodeTransform::Matrix(m) => {
+                warn!("<set_scale> - animating a node with a matrix transform — glTF spec violation, writing directly into matrix transform");
+                let (x, y, z) = extract_normalize_rot_from_mat4(m);
 
-    pub fn add_instances(&mut self, instances: &[ModelInstance]) {
-        self.instances.extend_from_slice(instances);
+                m.x.x = x.x * scl.x; 
+                m.x.y = x.y * scl.x;
+                m.x.z = x.z * scl.x;
+
+                m.y.x = y.x * scl.y;
+                m.y.y = y.y * scl.y;
+                m.y.z = y.z * scl.y;
+                
+                m.z.x = z.x * scl.z;
+                m.z.y = z.y * scl.z;
+                m.z.z = z.z * scl.z;
+            }
+        }
     }
 }
-
-//===============================================
-// Model-Graph
-//===============================================
 
 /// Structure that hold the data of a model-node in a scenegraph
 #[repr(C)]
@@ -113,21 +113,22 @@ pub struct ModelNodeData {
     pub mesh: Option<Mesh>,
 
     // For animation
-    pub translation: Vec3,
-    pub rotation: Quat,
-    pub scale: Vec3,
-
+    pub transform: NodeTransform,
     pub skin: i32,
 }
 
 impl Default for ModelNodeData {
     fn default() -> Self {
+        let transform = NodeTransform::Trs {
+            translation: Vec3::new(0.0, 0.0, 0.0),
+            rotation: Quat::new(1.0, 0.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0)
+        };
+
         Self {
             name: String::new(),
             mesh: None,
-            translation: Vec3::new(0.0, 0.0, 0.0),
-            rotation: Quat::new(1.0, 0.0, 0.0, 0.0),
-            scale: Vec3::new(1.0, 1.0, 1.0),
+            transform: transform,
             skin: -1,
         }
     }
@@ -144,17 +145,9 @@ impl Default for Node<ModelNodeData> {
 }
 
 impl Node<ModelNodeData> {
+    #[inline]
     pub fn get_local_matrix(&self) -> Mat4 {
-        // debug!("model node info:\n- translation: {:?}\n- rotation: {:?}\n- scale: {:?}", self.translation, self.rotation, self.scale);
-        let translation = Mat4::from_translation(self.value.translation);
-        let rotation = Mat4::from(self.value.rotation); 
-        let scale = Mat4::from_nonuniform_scale(
-            self.value.scale.x,
-            self.value.scale.y,
-            self.value.scale.z,
-        );
-
-        translation * rotation * scale
+        self.value.transform.get_matrix()
     }
 }
 /// Skin structure for vertex skinning.
@@ -205,7 +198,7 @@ impl ModelGraph {
 
     #[inline]
     pub fn find_node(&self, name: &str) -> Option<NodeId> {
-        self.graph.get_iterator()
+        self.graph.iter()
             .position(|node| node.value.name == name)
             .map(NodeId)
     }
@@ -306,17 +299,17 @@ impl ModelGraph {
                 PathType::TRANSLATION => {
                     let start = sampler.outputs_vec3[i];
                     let end = sampler.outputs_vec3[i + 1];
-                    node.value.translation = start.lerp(end, interp_factor);
+                    node.value.transform.set_translation(start.lerp(end, interp_factor));
                 }
                 PathType::ROTATION => {
                     let start = vec4_to_quat(sampler.outputs_vec4[i]);
                     let end = vec4_to_quat(sampler.outputs_vec4[i + 1]);
-                    node.value.rotation = start.slerp(end, interp_factor);
+                    node.value.transform.set_rotation(start.slerp(end, interp_factor));
                 }
                 PathType::SCALE => {
                     let start = sampler.outputs_vec3[i];
                     let end = sampler.outputs_vec3[i + 1];
-                    node.value.scale = start.lerp(end, interp_factor);
+                    node.value.transform.set_scale(start.lerp(end, interp_factor));
                 }
                 // TODO: support morph type animation
                 PathType::MORPH => warn!("Morph type animation not yet supported."),
@@ -324,7 +317,7 @@ impl ModelGraph {
         }
         Ok(())
     }
-
+    
     pub fn offset_materials_texture_ids(&mut self, offset: TextureId) {
         for material in &mut self.materials {
             material.offset_texture_ids(offset);
@@ -336,13 +329,13 @@ impl ModelGraph {
         let mut max_pos = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
 
         
-        for (i, node) in self.graph.get_iterator().enumerate() {
+        for (i, node) in self.graph.iter().enumerate() {
             let global_mat = self.get_global_matrix_of(NodeId(i));
 
+            let (translation, rotation, scale) = node.value.transform.get_trs();
+
             if node.value.name == "Z_UP" {
-                debug!("Z_UP transform: t={:?} r={:?} s={:?}", 
-                    node.value.translation, node.value.rotation, node.value.scale);
-            
+                debug!("Z_UP transform: t={:?} r={:?} s={:?}", translation, rotation, scale);
                 debug!("Z_UP global matrix: {:?}", global_mat);
             }
 
@@ -381,3 +374,5 @@ impl ModelGraph {
         Ok(())
     }
 }
+
+// endregion

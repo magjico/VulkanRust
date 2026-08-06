@@ -57,11 +57,10 @@ impl SkinningBuffer {
         })
     }
 
-    pub fn write_slice(&self, offset: u32, matrices: &[Mat4]) -> Result<()> {
+    pub fn write_slice(&self, offset: u32, matrices: &[Mat4]) {
         unsafe {
             memcpy(matrices.as_ptr(), self.mapped.add(offset as usize), matrices.len());
         }
-        Ok(())
     }
 
     #[allow(unsafe_op_in_unsafe_fn)]

@@ -23,7 +23,7 @@ use crate::constants::*;
 use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
-use crate::type_safety::{MeshOffset, ModelId, NodeId};
+use crate::type_safety::{MeshOffset, ModelId, NodeId, MaterialId};
 use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesStorage, create_color_objects,
                     create_depth_objects, create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
@@ -283,9 +283,9 @@ impl App {
         )?;
         
 		// 8 - 9. load .glb models and textures
-		let mut models = ModelsStorage(Vec::new());
-		let mut textures = TexturesStorage(Vec::new());
-		let mut model_registry = ModelRegistry { entries: HashMap::new() };
+		let mut models = ModelsStorage::new();
+		let mut textures = TexturesStorage::new();
+		let mut model_registry = ModelRegistry::new();
 
 		load_gltf_models(
 			&device,
@@ -338,6 +338,7 @@ impl App {
 		ecs_context.world.insert_resource(models);
 		ecs_context.world.insert_resource(Time(0.0));
 		spawn_from_cesium_man_instances(&mut ecs_context.world, &model_registry)?;
+        spawn_from_brain_stem_instance(&mut ecs_context.world, &model_registry)?;
 
         // 14. sync
         let sync_data = SyncData::create(
@@ -827,7 +828,7 @@ impl BuffersData {
         for (model_id, model) in models.iter().enumerate() {
             let model_id = ModelId(model_id);
 
-            for (node_idx, node) in model.graph.get_iterator().enumerate() {
+            for (node_idx, node) in model.graph.iter().enumerate() {
                 if let Some(mesh) = &node.value.mesh {
                     mesh_offsets.insert(
                         (model_id, NodeId(node_idx)),
@@ -1108,12 +1109,17 @@ impl CommandData {
         let mut draw_index: usize = 0;
         for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
             let model = models.get_model(mesh_handle.model_id);
+            let material_offset = models.get_material_offset(mesh_handle.model_id);
             let ssbo_offset = skeleton.map(|s| s.ssbo_offset).unwrap_or(PushConstants::NO_SKIN);
 
-            for (i, node) in model.graph.get_iterator().enumerate() {
+            for (i, node) in model.graph.iter().enumerate() {
                 let Some(mesh) = &node.value.mesh else { continue };
                 let node_id = NodeId(i);
                 let final_model = global.0  * model.get_global_matrix_of(node_id);
+
+                let material_set_id = mesh.material_id
+                    .map(|id| id + material_offset)
+                    .unwrap_or(MaterialId(0));
 
                 secondary_command_buffers.push(self.update_secondary_command_buffers(
                     device,
@@ -1129,6 +1135,7 @@ impl CommandData {
                     msaa_samples,
                     mesh_handle.model_id,
                     node_id,
+                    material_set_id,
                     image_index,
                     draw_index,
                 )?);
@@ -1168,9 +1175,12 @@ impl CommandData {
         msaa_samples: vk::SampleCountFlags,
         model_id: ModelId,
         node_id: NodeId,
+        material_set_id: MaterialId,
         image_index: usize,
         draw_index: usize
     ) -> Result<vk::CommandBuffer> {
+        // debug!("draw model={:?} node={:?} material_id={:?}", model_id, node_id, material_set_id);
+
         self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
 
@@ -1185,10 +1195,10 @@ impl CommandData {
         }
 
         let command_buffer = command_buffers[draw_index];
-
+        
         let material = {
-            if let Some(material_id) = mesh.material_index {
-                Some(&model.get_material(material_id))
+            if let Some(material_id) = mesh.material_id {
+                Some(model.get_material(material_id))
             } else {
                 None
             }
@@ -1236,16 +1246,12 @@ impl CommandData {
             );
 
             // materials binding
-            let material_descriptor_index = mesh.material_index
-                .map(|material_id| material_id.0)
-                .unwrap_or(0);
-			
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_data.pipeline_layout,
                 1,
-                &[descriptor_data.material_descriptor_sets[material_descriptor_index]],
+                &[descriptor_data.material_descriptor_sets[material_set_id.0]],
                 &[]
             );
 

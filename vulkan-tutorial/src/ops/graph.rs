@@ -1,7 +1,7 @@
 //===============================================
 // Graph (Tree like and Index-Based Design)
 //===============================================
-use std::slice::Iter;
+use std::slice::{Iter, IterMut};
 
 use crate::type_safety::NodeId;
 
@@ -28,11 +28,13 @@ impl<T> FlatGraph<T> {
 		FlatGraph {0: nodes}
 	}
 
+	#[inline]
 	pub fn get(&self, id: NodeId) -> &Node<T> {
 		self.0.get(id.0)
 			.unwrap_or_else(|| panic!("graph index {} out of bounds for length {}", id.0, self.0.len()))
 	}
 
+	#[inline]
 	pub fn get_mut(&mut self, id: NodeId) -> &mut Node<T> {
 		let len = self.0.len();
 		self.0.get_mut(id.0)
@@ -49,7 +51,12 @@ impl<T> FlatGraph<T> {
 		id
 	}
 
-	pub fn get_iterator(&self) -> Iter<'_, Node<T>> {
+	#[inline]
+	pub fn iter(&self) -> Iter<'_, Node<T>> {
 		self.0.iter()
+	}
+	#[inline]
+	pub fn iter_mut(&mut self) -> IterMut<'_, Node<T>> {
+		self.0.iter_mut()
 	}
 }

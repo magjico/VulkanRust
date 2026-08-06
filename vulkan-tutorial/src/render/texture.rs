@@ -38,6 +38,11 @@ pub struct TexturesStorage(pub Vec<TextureData>);
 
 impl TexturesStorage {
     #[inline]
+    pub fn new() -> Self {
+        TexturesStorage(Vec::new())
+    }
+
+    #[inline]
     pub fn get_length(&self) -> usize {
         self.0.len()
     }

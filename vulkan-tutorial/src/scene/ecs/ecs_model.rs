@@ -4,6 +4,7 @@ use log::*;
 
 use bevy_ecs::prelude::*;
 
+use crate::constants::MAX_JOINT_PER_INSTANCE;
 use crate::math::{Mat4, Quat, Vec3};
 use crate::type_safety::{SkinId, AnimationId, ModelId};
 use super::{SkinningBuffer, SSBOSkiningAllocator, ModelsStorage, Time};
@@ -163,7 +164,7 @@ pub fn update_skeletons(
 		model.apply_pose(skeleton.anim_id, skeleton.anim_time)?;
 		
 		let joint_mats = model.get_skinning_joint_matrices(skeleton.skin_id);
-		skinning_buffer.write_slice(skeleton.ssbo_offset, &joint_mats)?;
+		skinning_buffer.write_slice(skeleton.ssbo_offset, &joint_mats);
 	}
 
 	Ok(())
@@ -228,6 +229,15 @@ impl ModelSpawnBuilder {
 		// check if the entity have any skeleton
 		let skeleton = self.skin_id
 			.map(|skin_id| -> Result<SkeletonInstance> {
+
+				let models = world.get_resource::<ModelsStorage>()
+            		.ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+
+				let joint_count = models.get_model(self.model_id).get_skin(skin_id).joints.len();
+				if joint_count > MAX_JOINT_PER_INSTANCE as usize {
+					return Err(anyhow!("skin has {} joints, max is {}", joint_count, MAX_JOINT_PER_INSTANCE));
+				}
+
 				let mut ssbo_allocator = world.get_resource_mut::<SSBOSkiningAllocator>()
 					.ok_or_else(|| anyhow!("Cannot find a ssbo allocator to spawn model."))?;
 

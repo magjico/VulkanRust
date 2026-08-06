@@ -9,8 +9,7 @@ pub use geometry::Vertex;
 pub use geometry::Material;
 pub use geometry::Mesh;
 
-pub use model::ModelInstance;
-pub use model::Model;
+pub use model::NodeTransform;
 pub use model::ModelGraph;
 pub use model::Skin;
 pub use model::ModelNodeData;

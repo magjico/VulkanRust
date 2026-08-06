@@ -217,7 +217,7 @@ impl Material {
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub material_index: Option<MaterialId>,
+    pub material_id: Option<MaterialId>,
 }
 
 // TODO: mesh builder struct ?
@@ -226,7 +226,7 @@ impl Default for Mesh {
         Self {
             vertices: Vec::new(),
             indices: Vec::new(),
-            material_index: None
+            material_id: None
         }
     }
 }

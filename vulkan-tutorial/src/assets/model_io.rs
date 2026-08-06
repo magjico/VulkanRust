@@ -6,7 +6,7 @@ use std::path::Path;
 
 use log::*;
 use anyhow::{Result, anyhow};
-use cgmath::{One, Quaternion, SquareMatrix, Zero, vec2, vec3};
+use cgmath::{SquareMatrix, vec2, vec3};
 
 use basis_universal::{TranscodeParameters, Transcoder, TranscoderTextureFormat};
 use png::Decoder;
@@ -26,9 +26,7 @@ use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
 
-//===============================================
-// texture file
-//===============================================
+// region load texture file
 
 /// Create a texture image from a .png.
 ///
@@ -83,10 +81,9 @@ pub fn load_texture(
     Ok((texture_image, texture_image_memory, mip_levels))
 
 }
+// endregion
 
-//===============================================
-// .obj
-//===============================================
+// region load obj
 
 /// Load a .obj 3D model and return its vertices and the associated indexes.
 /// 
@@ -158,7 +155,7 @@ pub fn load_obj_model(path: &str) -> Result<Mesh> {
         }
     }
 
-    Ok(Mesh {vertices, indices, material_index: None})
+    Ok(Mesh {vertices, indices, material_id: None})
 }
 
 pub fn load_3d_content(
@@ -193,10 +190,9 @@ pub fn load_3d_content(
 
     Ok((mesh, texture))
 }
+// endregion
 
-//===============================================
-// glTF
-//===============================================
+// region load glTF
 
 /// check if the texture mimetype is ktx2
 fn is_ktx2(image_src: &Source) -> bool {
@@ -508,6 +504,12 @@ fn load_gltf_animations(
                 }
             }
 
+            debug!("sampler interp={:?} inputs={} vec3={} vec4={}",
+                interpolation_type,
+                inputs.len(),
+                outputs_vec3.len(),
+                outputs_vec4.len());
+
             AnimationSampler {
                 interpolation_type,
                 inputs,
@@ -576,6 +578,8 @@ pub fn load_gltf_skins(
             .map(|iter| iter.map(Mat4::from).collect())
             .unwrap_or_else(|| vec![Mat4::identity(); joints.len()]);
 
+        debug!("skin '{}' : {} joints, {} inverse_bind_mats", name, joints.len(), inverse_bind_mats.len());
+
         Ok(Skin {
             name,
             skeleton_root,
@@ -596,6 +600,8 @@ pub fn load_gltf_model(
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
 ) -> Result<(ModelGraph, Vec<TextureData>)> {
+    info!("loading model: {:?}", path);
+
     // warn: this method does not support reading gltf / glb from web.
     let (document, buffers, _) = gltf::import(path)?;
     let base_dir = std::path::Path::new(path).parent()
@@ -621,26 +627,24 @@ pub fn load_gltf_model(
 
     // 3.a - create all nodes data 
     let mut linear_nodes: Vec<Node<ModelNodeData>> = document.nodes().map(|node| {
-        let (translation, rotation, scale) = match node.transform() {
-            gltf::scene::Transform::Matrix { matrix: _ } => {
-                warn!("Matrix transform not yet supported, using identity.");
-                (Vec3::zero(), Quaternion::one(), Vec3::new(1.0, 1.0, 1.0))
+        let transform = match node.transform() {
+            gltf::scene::Transform::Matrix { matrix } => {
+                NodeTransform::Matrix(Mat4::from(matrix))
             },
-            
-            gltf::scene::Transform::Decomposed { translation, rotation, scale } => (
-                Vec3::new(translation[0], translation[1], translation[2]),
-                Quat::new(rotation[3], rotation[0], rotation[1], rotation[2]),
-                Vec3::new(scale[0], scale[1], scale[2])
-            ),
+            gltf::scene::Transform::Decomposed { translation, rotation, scale } => {
+                NodeTransform::Trs {
+                    translation: Vec3::new(translation[0], translation[1], translation[2]),
+                    rotation: Quat::new(rotation[3], rotation[0], rotation[1], rotation[2]),
+                    scale: Vec3::new(scale[0], scale[1], scale[2])
+                }
+            },
         };
 
         let skin_index = node.skin().map(|skin| skin.index() as i32).unwrap_or(-1);
         let model_node_data = ModelNodeData {
             name: node.name().unwrap_or("").to_string(),
             
-            translation,
-            rotation,
-            scale,
+            transform: transform,
             skin: skin_index,
 
             ..ModelNodeData::default()
@@ -652,6 +656,7 @@ pub fn load_gltf_model(
             value: model_node_data,
         }
     }).collect();
+    info!("loaded {} nodes for this model", linear_nodes.len());
 
     for node in document.nodes() {
         // 3.b - establish parent-child relationships
@@ -671,7 +676,8 @@ pub fn load_gltf_model(
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
                 if let Some(iter) = reader.read_indices() {
-                    mesh.material_index = primitive.material().index().map(|i| Some(MaterialId(i))).unwrap_or(None);
+                    let vertex_base = mesh.vertices.len() as u32;
+                    mesh.material_id = primitive.material().index().map(|i| Some(MaterialId(i))).unwrap_or(None);
 
                     let positions = reader.read_positions().expect("primitive has no positions");
                     let mut normals = reader.read_normals();
@@ -701,7 +707,7 @@ pub fn load_gltf_model(
                         });
                     }
 
-                    mesh.indices.extend(iter.into_u32());
+                    mesh.indices.extend(iter.into_u32().map(|i| i + vertex_base));
                 }
                 else {
                     warn!("Primitive without index; skipping.")
@@ -738,7 +744,7 @@ pub fn load_gltf_model(
         roots,
         materials,
         animations,
-        skins
+        skins,
     );
 
     model.get_debug_info()?;
@@ -776,9 +782,11 @@ pub fn load_model_with_offset(
     )?;
 
     let texture_id = register_model_textures(textures, &mut model_graph, model_textures);
+    
     let model_id = models.push(model_graph);
     
     registry.entries.insert(name.to_string(), ModelAssets { model_id, texture_id });
 
     Ok(())
 }
+// endregion

@@ -251,10 +251,10 @@ void main()
 	}
 
 	vec3 ambient	= vec3(0.03) * baseColor.rgb * ao;
-	vec3 color		= ambient + Lo + emissive;
+	vec3 color		= ambient + Lo; // + emissive;
 	// color = color / (color + vec3(1.0));
-	color = ACESFilm(color * ubo.exposure);
-	color = pow(color, vec3(1.0 / ubo.gamma));
+	// color = ACESFilm(color * ubo.exposure);
+	// color = pow(color, vec3(1.0 / ubo.gamma));
 
     outColor = vec4(color, baseColor.a);
 }

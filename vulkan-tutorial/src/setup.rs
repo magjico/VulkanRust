@@ -1,8 +1,6 @@
 //! Setup multiple **specific** app objects
 use anyhow::anyhow;
 use cgmath::One;
-use rand::RngExt;
-use log::*;
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
@@ -166,14 +164,6 @@ pub fn create_material_descriptor_sets(
     };
 
     for (i, material) in materials.iter().enumerate() {
-        debug!("material indices:\n\t- base = {:?}\n\t- metallic = {:?}\n\t- normal = {:?}\n\t- occlusion = {:?}\n\t- emissive = {:?}",
-            material.base_color_texture_idx,
-            material.metallic_roughness_texture_idx,
-            material.normal_texture_idx,
-            material.occlusion_texture_idx,
-            material.emissive_texture_idx,
-        );
-
         let image_infos: Vec<vk::DescriptorImageInfo> = vec![
             material.base_color_texture_idx,
             material.metallic_roughness_texture_idx,
@@ -330,52 +320,6 @@ pub fn init_ecs_context(
 // models
 //===============================================
 
-/// Setup 10 instances objects for instance rendering tests
-pub fn setup_object_instances() -> Result<Vec<ModelInstance>> {
-    let mut rng = rand::rng();
-
-    let n = 5;
-    let x_min = -10_f32;
-    let x_max =  10_f32;
-    let y_min = -10_f32;
-    let y_max =  10_f32;
-
-    let nx = (n as f32).sqrt().ceil() as i32;
-    let ny = (n as f32 / nx as f32).ceil() as i32;
-    let step_x = if nx > 1 { (x_max - x_min) / (nx - 1) as f32 } else { 0.0 };
-    let step_y = if ny > 1 { (y_max - y_min) / (ny - 1) as f32 } else { 0.0 };
-
-    let object_instances: Vec<ModelInstance> = (0..n)
-        .map(|i| {
-            let ix = i % nx;
-            let iy = i / nx;
-
-            let x = x_max + ix as f32 * step_x;
-            let y = y_min + iy as f32 * step_y;
-
-            ModelInstance::from_degrees(
-                Vec3::new(x, y, 0.0),
-                Vec3::new(0.0,0.0, rng.random_range(-180.0..180.0)),
-                Vec3::new(rng.random_range(0.5..1.2), rng.random_range(0.5..1.2), rng.random_range(0.5..1.2))
-            )
-        })
-        .collect();
-
-    Ok(object_instances)
-}
-
-/// load models and setup their instances for testing purposes.
-pub fn load_models() -> Result<Vec<Model>> {
-    let mut models = Vec::new();
-
-    let mut model = Model::create_with_obj(MESH_PATH)?;
-    model.add_instances(&setup_object_instances()?);
-
-    models.push(model);
-
-    Ok(models)
-}
-
 /// load gltf models
 pub fn load_gltf_models(
 	device: &Device,
@@ -437,6 +381,35 @@ pub fn spawn_from_cesium_man_instances(
 
 	Ok(entities)
 }
+
+pub fn spawn_from_brain_stem_instance(
+    world: &mut World,
+    model_registry: &ModelRegistry
+) -> Result<Vec<Entity>> {
+    let assets = model_registry.entries.get(BRAIN_STEM_KEY)
+        .ok_or_else(|| anyhow!("key <{}> not found in registry", BRAIN_STEM_KEY))?;
+
+    let positions = [
+        Vec3::new(0.0, 0.0, 0.0)
+    ];
+
+    let entities = positions.iter()
+        .map(|&pos| {
+            let transform = Transform::new(
+                pos,
+                Quat::one(),
+                Vec3::new(1.0, 1.0, 1.0)
+            );
+
+            ModelSpawnBuilder::new(assets.model_id)
+                .with_animation(AnimationSpec::Animated { skin_id: SkinId(0), anim_id: AnimationId(0) })
+                .spawn_at(world, transform)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(entities)
+}
+
 
 //===============================================
 // defaults
