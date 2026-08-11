@@ -303,6 +303,7 @@ pub fn init_ecs_context(
     ecs_context.world.insert_resource(skinning_buff);
 	ecs_context.world.insert_resource(SSBOSkiningAllocator(SlotAllocator::new(MAX_INSTANCES, MAX_JOINT_PER_INSTANCE)));
 	ecs_context.world.insert_resource(Time::default());
+    ecs_context.world.insert_resource(CurrentFrame::default());
 
     // schedule
     ecs_context.schedule.add_systems(

@@ -4,7 +4,7 @@ use std::ptr::copy_nonoverlapping as memcpy;
 use bevy_ecs::prelude::*;
 use vulkanalia::prelude::v1_0::*;
 
-use crate::constants::MAX_TOTAL_JOINTS;
+use crate::constants::{MAX_TOTAL_JOINTS, FRAME_STRIDE};
 use crate::math::Mat4;
 use crate::resources::create_buffer;
 
@@ -57,9 +57,10 @@ impl SkinningBuffer {
         })
     }
 
-    pub fn write_slice(&self, offset: u32, matrices: &[Mat4]) {
+    pub fn write_slice(&self, frame: usize, offset: u32, matrices: &[Mat4]) {
+        let base = frame * FRAME_STRIDE + offset as usize;
         unsafe {
-            memcpy(matrices.as_ptr(), self.mapped.add(offset as usize), matrices.len());
+            memcpy(matrices.as_ptr(), self.mapped.add(base), matrices.len());
         }
     }
 

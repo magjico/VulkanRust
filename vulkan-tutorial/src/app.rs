@@ -29,8 +29,7 @@ use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesSto
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::scene::{Camera, CameraBuilder, ECSContext, LightBuffer, Material, ModelGraph, ModelRegistry,
-                    ModelsStorage, Primitive, SkinningBuffer, Time};
+use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, LightBuffer, Material, ModelGraph, ModelRegistry, ModelsStorage, Primitive, SkinningBuffer, Time};
 use crate::math::{Mat4, Vec3, Vec4};
 
 //===================================================
@@ -44,6 +43,9 @@ pub struct AppManager {
     pub app: Option<App>,
     pub input: WinitInputHelper,
 	pub last_frame_time: Option<Instant>,
+
+    pub fps_accumulator: f32,
+    pub fps_frame_count: u32,
 }
 
 
@@ -96,6 +98,22 @@ impl ApplicationHandler for AppManager {
 			let delta_time = self.last_frame_time
 				.map(|t| now.duration_since(t).as_secs_f32())
 				.unwrap_or(0.0);
+
+            self.fps_accumulator += delta_time;
+            self.fps_frame_count += 1;
+
+            if self.fps_accumulator >= 1.0 && self.fps_frame_count > 0 {
+                let fps = self.fps_frame_count as f32 / self.fps_accumulator;
+                let ms = 1000.0 * self.fps_accumulator / self.fps_frame_count as f32;
+                info!("{:.1} fps ({:.2} ms/frame)", fps, ms);
+
+                let total: usize = app.data.command_data.secondary_command_buffers.iter().map(|v| v.len()).sum();
+                info!("secondary command buffers: {}", total);
+
+                self.fps_accumulator = 0.0;
+                self.fps_frame_count = 0;
+            }
+
 			self.last_frame_time = Some(now);
 
             let ECSContext { world, schedule, .. } = &mut app.ecs_context;
@@ -103,6 +121,10 @@ impl ApplicationHandler for AppManager {
             // ECS - update time then execute the schedule
             if let Some(mut ecs_time) = world.get_resource_mut::<Time>() {
                 ecs_time.0 = delta_time;
+            }
+
+            if let Some(mut c_frame) = world.get_resource_mut::<CurrentFrame>() {
+                c_frame.0 = app.frame;
             }
 
             schedule.run(world);
@@ -556,6 +578,7 @@ impl App {
             &self.data.descriptor_data,
             self.data.device_data.msaa_samples,
             image_index,
+            self.frame
         )?;
 
         // Update UBO
@@ -1041,6 +1064,7 @@ impl CommandData {
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
+        frame_index: usize,
     ) -> Result<()> {
         // Pool
         let command_pool = self.command_pools[image_index];
@@ -1111,7 +1135,9 @@ impl CommandData {
         for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
             let model = models.get_model(mesh_handle.model_id);
             let material_offset = models.get_material_offset(mesh_handle.model_id);
-            let ssbo_offset = skeleton.map(|s| s.ssbo_offset).unwrap_or(PushConstants::NO_SKIN);
+            let ssbo_offset = skeleton
+                .map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
+                .unwrap_or(PushConstants::NO_SKIN);
 
             for (i, node) in model.graph.iter().enumerate() {
                 let Some(mesh) = &node.value.mesh else { continue };
@@ -1182,9 +1208,6 @@ impl CommandData {
         image_index: usize,
         draw_index: usize
     ) -> Result<vk::CommandBuffer> {
-        // debug!("draw model={:?} node={:?} material_id={:?}", model_id, node_id, material_set_id);
-
-        self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
         let command_buffers = &mut self.secondary_command_buffers[image_index];
 
         while draw_index >= command_buffers.len() {

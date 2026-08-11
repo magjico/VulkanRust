@@ -7,7 +7,7 @@ use bevy_ecs::prelude::*;
 use crate::constants::MAX_JOINT_PER_INSTANCE;
 use crate::math::{Mat4, Quat, Vec3};
 use crate::type_safety::{SkinId, AnimationId, ModelId};
-use super::{SkinningBuffer, SSBOSkiningAllocator, ModelsStorage, Time};
+use super::{SkinningBuffer, SSBOSkiningAllocator, ModelsStorage, Time, CurrentFrame};
 use super::super::AnimationSpec;
 
 //===============================================
@@ -151,6 +151,7 @@ pub fn update_skeletons(
 	mut models: ResMut<ModelsStorage>,
 	skinning_buffer: Res<SkinningBuffer>,
 	time: Res<Time>,
+	current_frame: Res<CurrentFrame>,
 ) -> Result<() >{
 	for (mesh_handle, mut skeleton) in &mut query {
 		let model = models.get_mut_model(mesh_handle.model_id);
@@ -164,7 +165,7 @@ pub fn update_skeletons(
 		model.apply_pose(skeleton.anim_id, skeleton.anim_time)?;
 		
 		let joint_mats = model.get_skinning_joint_matrices(skeleton.skin_id);
-		skinning_buffer.write_slice(skeleton.ssbo_offset, &joint_mats);
+		skinning_buffer.write_slice(current_frame.0, skeleton.ssbo_offset, &joint_mats);
 	}
 
 	Ok(())
@@ -176,9 +177,10 @@ pub fn update_skeletons_wrapped(
     models: ResMut<ModelsStorage>,
     skinning_buffer: Res<SkinningBuffer>,
     time: Res<Time>,
+	current_frame: Res<CurrentFrame>,
 ) {
-    if let Err(e) = update_skeletons(query, models, skinning_buffer, time) {
-        warn!("update_skeletons failed: {}", e);
+    if let Err(e) = update_skeletons(query, models, skinning_buffer, time, current_frame) {
+        error!("update_skeletons failed: {}", e);
     }
 }
 

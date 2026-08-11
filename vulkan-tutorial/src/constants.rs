@@ -17,9 +17,13 @@ pub const CORRECTION: Mat4 = Mat4::new(
     0.0, 0.0, 1.0 / 2.0, 1.0
 );
 
+/// The maximum number of frames that can be processed concurrently.
+pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
 pub const MAX_INSTANCES: u32 = 256;
 pub const MAX_JOINT_PER_INSTANCE: u32 = 64;
-pub const MAX_TOTAL_JOINTS: usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usize;
+pub const FRAME_STRIDE:     usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usize;
+pub const MAX_TOTAL_JOINTS: usize = FRAME_STRIDE * MAX_FRAMES_IN_FLIGHT;
 
 //==================================
 // Info Consts
@@ -44,8 +48,6 @@ pub const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"
 /// The required device extensions.
 pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name,
     vk::KHR_SYNCHRONIZATION2_EXTENSION.name, vk::KHR_DYNAMIC_RENDERING_EXTENSION.name];
-/// The maximum number of frames that can be processed concurrently.
-pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 /// Vert shader
 pub const VERT: &[u8] = include_bytes!("../shaders/hello_model/vert.spv");
 /// Frag shader

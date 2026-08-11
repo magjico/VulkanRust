@@ -95,3 +95,6 @@ impl ModelRegistry {
 
 #[derive(Resource)]
 pub struct VulkanDevice(pub Device);
+
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct CurrentFrame(pub usize);

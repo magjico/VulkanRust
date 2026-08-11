@@ -20,6 +20,7 @@ pub use ecs_resource::ModelsStorage;
 pub use ecs_resource::ModelAssets;
 pub use ecs_resource::ModelRegistry;
 pub use ecs_resource::VulkanDevice;
+pub use ecs_resource::CurrentFrame;
 
 pub use ecs_buffer::SkinningBuffer;
 
