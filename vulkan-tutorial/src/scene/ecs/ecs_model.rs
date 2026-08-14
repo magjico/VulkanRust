@@ -163,6 +163,7 @@ pub fn update_skeletons(
 		}
 
 		model.apply_pose(skeleton.anim_id, skeleton.anim_time)?;
+		model.propagate_transforms();
 		
 		let joint_mats = model.get_skinning_joint_matrices(skeleton.skin_id);
 		skinning_buffer.write_slice(current_frame.0, skeleton.ssbo_offset, &joint_mats);

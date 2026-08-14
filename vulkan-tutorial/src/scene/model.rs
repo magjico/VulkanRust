@@ -1,5 +1,7 @@
 use std::slice::{Iter, IterMut};
+use std::mem;
 
+use cgmath::SquareMatrix;
 use log::*;
 use anyhow::{Result, anyhow};
 use cgmath::VectorSpace;
@@ -114,6 +116,7 @@ pub struct ModelNodeData {
 
     // For animation
     pub transform: NodeTransform,
+    pub global_transform: Mat4, // The result of multiple TRS transformations is not always representable as a TRS. That's why its a Mat4.
     pub skin: i32,
 }
 
@@ -129,6 +132,7 @@ impl Default for ModelNodeData {
             name: String::new(),
             mesh: None,
             transform: transform,
+            global_transform: Mat4::identity(),
             skin: -1,
         }
     }
@@ -169,7 +173,6 @@ pub struct Skin {
     pub inverse_bind_mats: Vec<Mat4>,
     pub joints: Vec<NodeId>,
 }
-
 #[derive(Debug, Clone)]
 pub struct ModelGraph {
 	pub graph:		FlatGraph<ModelNodeData>,
@@ -202,21 +205,9 @@ impl ModelGraph {
             .position(|node| node.value.name == name)
             .map(NodeId)
     }
-
+    #[inline]
     pub fn get_global_matrix_of(&self, id: NodeId) -> Mat4 {
-        let node = self.graph.get(id);
-
-        let mut global = node.get_local_matrix();
-        let mut parent = node.parent;
-
-        while let Some(parent_index) = parent {
-            let current = self.graph.get(parent_index);
-
-            global = current.get_local_matrix() * global;
-            parent = current.parent;
-        }
-
-        global
+        self.graph.get(id).value.global_transform
     }
 
     pub fn get_skinning_joint_matrices(&self, skin_id: SkinId) -> Vec<Mat4> {
@@ -265,6 +256,23 @@ impl ModelGraph {
     #[inline]
     pub fn animations_iter_mut(&mut self) -> IterMut<'_, Animation> {
         self.animations.iter_mut()
+    }
+
+    pub fn propagate_transforms(&mut self) {
+        self.graph.with_levels(|graph, levels| {
+                for level in levels {
+                    for &id in level {
+                        let local = graph.get(id).get_local_matrix();
+                        let global = if let Some(parent) = graph.get(id).parent {
+                            graph.get(parent).value.global_transform * local
+                        } else {
+                            local
+                        };
+                        graph.get_mut(id).value.global_transform = global;
+                    }
+                }
+            }
+        );
     }
 
     pub fn apply_pose(

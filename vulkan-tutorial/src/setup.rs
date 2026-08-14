@@ -366,16 +366,19 @@ pub fn spawn_from_cesium_man_instances(
 		Vec3::new(2.0, 2.0, 0.0),
 	];
 
-	let entities = positions.iter()
-		.map(|&pos| {
+	let entities = positions.iter().enumerate()
+		.map(|(i, &pos)| {
 			let transform =  Transform::new(
 				pos,
 				Quat::one(),
 				Vec3::new(1.0, 1.0, 1.0)
 			);
 
+            let anim_time =  0.5 * i as f32;
+
 			ModelSpawnBuilder::new(cesium_assets.model_id)
 				.with_animation(AnimationSpec::Animated { skin_id: SkinId(0), anim_id: AnimationId(0) })
+                .animation_start_at(anim_time)
 				.spawn_at(world, transform)
 		})
 		.collect::<Result<Vec<_>>>()?;
