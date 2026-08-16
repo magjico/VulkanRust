@@ -29,8 +29,8 @@ use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesSto
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, LightBuffer, Material, ModelGraph, ModelRegistry, ModelsStorage, Primitive, SkinningBuffer, Time};
-use crate::math::{Mat4, Vec3, Vec4};
+use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, LightBuffer, Material, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
+use crate::math::{Vec3, Vec4};
 
 //===================================================
 // App Manager
@@ -106,9 +106,6 @@ impl ApplicationHandler for AppManager {
                 let fps = self.fps_frame_count as f32 / self.fps_accumulator;
                 let ms = 1000.0 * self.fps_accumulator / self.fps_frame_count as f32;
                 info!("{:.1} fps ({:.2} ms/frame)", fps, ms);
-
-                let total: usize = app.data.command_data.secondary_command_buffers.iter().map(|v| v.len()).sum();
-                info!("secondary command buffers: {}", total);
 
                 self.fps_accumulator = 0.0;
                 self.fps_frame_count = 0;
@@ -1013,7 +1010,7 @@ pub struct CommandData {
     pub command_pool: vk::CommandPool,
     pub command_pools: Vec<vk::CommandPool>,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
+    pub secondary_command_buffers: Vec<vk::CommandBuffer>,
     pub setup_command_buffer: vk::CommandBuffer,
 }
 
@@ -1127,55 +1124,21 @@ impl CommandData {
 
         unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
 
-        let mut secondary_command_buffers = Vec::new();
-        let models = ecs_context.world.get_resource::<ModelsStorage>()
-            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
-
-        let mut draw_index: usize = 0;
-        for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
-            let model = models.get_model(mesh_handle.model_id);
-            let material_offset = models.get_material_offset(mesh_handle.model_id);
-            let ssbo_offset = skeleton
-                .map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
-                .unwrap_or(PushConstants::NO_SKIN);
-
-            for (i, node) in model.graph.iter().enumerate() {
-                let Some(mesh) = &node.value.mesh else { continue };
-                let node_id = NodeId(i);
-                let final_model = global.0  * model.get_global_matrix_of(node_id);
-                let mesh_offset = *buffers_data.mesh_offsets.get(&(mesh_handle.model_id, node_id))
-                    .unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", mesh_handle.model_id, node_id));
-
-                for primitive in &mesh.primitives {
-                    let material_set_id = primitive.material_id
-                        .map(|id| id + material_offset)
-                        .unwrap_or(MaterialId(0));
-
-                    secondary_command_buffers.push(self.update_secondary_command_buffers(
-                        device,
-                        primitive,
-                        mesh_offset,
-                        final_model,
-                        ssbo_offset,
-                        model,
-                        pipeline_data,
-                        buffers_data,
-                        &[swapchain_data.swapchain_format],
-                        depth_data,
-                        descriptor_data,
-                        msaa_samples,
-                        material_set_id,
-                        image_index,
-                        draw_index,
-                    )?);
-
-                    draw_index += 1;
-                }
-            }
-        }
+        let secondary_command_buffer = self.record_secondary_command_buffer(
+            device,
+            ecs_context,
+            pipeline_data,
+            buffers_data,
+            &[swapchain_data.swapchain_format],
+            depth_data,
+            descriptor_data,
+            msaa_samples,
+            image_index,
+            frame_index
+        )?;
 
         unsafe { 
-            device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
+            device.cmd_execute_commands(command_buffer, &[secondary_command_buffer]);
             device.cmd_end_rendering_khr(command_buffer);
         };
 
@@ -1189,58 +1152,22 @@ impl CommandData {
 
         Ok(())
     }
-
-    pub fn update_secondary_command_buffers(
+    
+    /// record draws inside a unique secondary command buffer
+    fn record_secondary_command_buffer(
         &mut self,
         device: &Device,
-        primitive: &Primitive,
-        mesh_offset: MeshOffset,
-        final_model: Mat4,
-        ssbo_offset: u32,
-        model: &ModelGraph,
+        ecs_context: &mut ECSContext,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
         swapchain_formats: &[vk::Format],
         depth_data: &DepthData,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
-        material_set_id: MaterialId,
         image_index: usize,
-        draw_index: usize
+        frame_index: usize
     ) -> Result<vk::CommandBuffer> {
-        let command_buffers = &mut self.secondary_command_buffers[image_index];
-
-        while draw_index >= command_buffers.len() {
-            let allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pools[image_index])
-                .level(vk::CommandBufferLevel::SECONDARY)
-                .command_buffer_count(1);
-
-            let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
-            command_buffers.push(command_buffer);
-        }
-
-        let command_buffer = command_buffers[draw_index];
-        
-        let material = {
-            if let Some(material_id) = primitive.material_id {
-                Some(model.get_material(material_id))
-            } else {
-                None
-            }
-        };
-
-        let metallic_factor = material.map(|m| m.metallic_factor).unwrap_or(1.0);
-        let roughness_factor = material.map(|m| m.roughness_factor).unwrap_or(1.0);
-		let _padding = 0.0;
-		let base_color_factor = material.map(|m| m.base_color_factor).unwrap_or(Vec4::new(1.0, 1.0, 1.0, 1.0));
-		let base_color_texture_set	= material.map(|m| m.base_color_texture_set).unwrap_or(-1);
-		let physical_descriptor_texture_set = material.map(|m| m.metallic_roughness_texture_set).unwrap_or(-1);
-		let normal_texture_set = material.map(|m| m.normal_texture_set).unwrap_or(-1);
-		let occlusion_texture_set= material.map(|m| m.occlusion_texture_set).unwrap_or(-1);
-		let emissive_texture_set= material.map(|m| m.emissive_texture_set).unwrap_or(-1);
-		let alpha_mask = material.map(|m| m.alpha_mask).unwrap_or(0.0);
-		let alpha_mask_cutoff = material.map(|m| m.alpha_mask_cutoff).unwrap_or(0.5);
+        let command_buffer = self.secondary_command_buffers[image_index];
 
         let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
             .color_attachment_formats(swapchain_formats)
@@ -1254,30 +1181,20 @@ impl CommandData {
             .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
             .inheritance_info(&inheritance_info);
 
+
         unsafe {
             device.begin_command_buffer(command_buffer, &info)?;
 
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_data.pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers_data.interleaved_buffer], &[0]);
             device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.interleaved_offset, vk::IndexType::UINT32);
-            
-            // UBO binding
+        
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_data.pipeline_layout,
                 0,
                 &[descriptor_data.global_descriptor_sets[image_index]],
-                &[]
-            );
-
-            // materials binding
-            device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline_data.pipeline_layout,
-                1,
-                &[descriptor_data.material_descriptor_sets[material_set_id.0]],
                 &[]
             );
 
@@ -1290,57 +1207,98 @@ impl CommandData {
                 &[descriptor_data.skinning_descriptor_set],
                 &[]
             );
-
-            let push_constant = PushConstants {
-                model: final_model,
-                ssbo_offset,
-                
-                metallic_factor,
-				roughness_factor,
-				_padding,
-				base_color_factor,
-				base_color_texture_set,
-				physical_descriptor_texture_set,
-				normal_texture_set,
-				occlusion_texture_set,
-				emissive_texture_set,
-				alpha_mask,
-				alpha_mask_cutoff,
-            };
-
-			let push_bytes = std::slice::from_raw_parts(
-				&push_constant as *const PushConstants as *const u8,
-				size_of::<PushConstants>()
-			);
-
-			let frag_offset = PushConstants::get_frag_offset();
-
-            device.cmd_push_constants(
-                command_buffer,
-                pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                &push_bytes[..frag_offset as usize]
-            );
-            device.cmd_push_constants(
-                command_buffer,
-                pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::FRAGMENT,
-                frag_offset,
-                &push_bytes[frag_offset as usize..],
-            );
-
-            device.cmd_draw_indexed(
-                command_buffer,
-                primitive.index_count,
-                1,
-                mesh_offset.first_index + primitive.first_index,
-                mesh_offset.vertex_offset as i32,
-                0
-            );
-            device.end_command_buffer(command_buffer)?;
         }
 
+        let mut last_material: Option<MaterialId> = None;
+
+        let models = ecs_context.world.get_resource::<ModelsStorage>()
+            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+
+        for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
+            let model = models.get_model(mesh_handle.model_id);
+            let material_offset = models.get_material_offset(mesh_handle.model_id);
+            let ssbo_offset = skeleton
+                .map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
+                .unwrap_or(PushConstants::NO_SKIN);
+
+            for (i, node) in model.graph.iter().enumerate() {
+                let Some(mesh) = &node.value.mesh else { continue };
+
+                let node_id = NodeId(i);
+                let final_model = global.0  * model.get_global_matrix_of(node_id);
+                let mesh_offset = *buffers_data.mesh_offsets
+                    .get(&(mesh_handle.model_id, node_id))
+                    .unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", mesh_handle.model_id, node_id));
+
+                for primitive in &mesh.primitives {
+                    let material_set_id = primitive.material_id
+                        .map(|id| id + material_offset)
+                        .unwrap_or(MaterialId(0));
+
+                    // state tracking
+                    if last_material != Some(material_set_id) {
+                        last_material = Some(material_set_id);
+
+                        unsafe {
+                            // materials binding
+                            device.cmd_bind_descriptor_sets(
+                                command_buffer,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                pipeline_data.pipeline_layout,
+                                1,
+                                &[descriptor_data.material_descriptor_sets[material_set_id.0]],
+                                &[]
+                            );
+                        }
+                    }
+
+                    let material = {
+                        if let Some(material_id) = primitive.material_id {
+                            Some(model.get_material(material_id))
+                        } else {
+                            None
+                        }
+                    };
+
+                    let push_constant = PushConstants::new(final_model, ssbo_offset, material);
+
+                    unsafe {
+                        let push_bytes = std::slice::from_raw_parts(
+                            &push_constant as *const PushConstants as *const u8,
+                            size_of::<PushConstants>()
+                        );
+                        
+                        let frag_offset = PushConstants::get_frag_offset();
+
+                        device.cmd_push_constants(
+                            command_buffer,
+                            pipeline_data.pipeline_layout,
+                            vk::ShaderStageFlags::VERTEX,
+                            0,
+                            &push_bytes[..frag_offset as usize]
+                        );
+                        device.cmd_push_constants(
+                            command_buffer,
+                            pipeline_data.pipeline_layout,
+                            vk::ShaderStageFlags::FRAGMENT,
+                            frag_offset,
+                            &push_bytes[frag_offset as usize..],
+                        );
+
+                        device.cmd_draw_indexed(
+                            command_buffer,
+                            primitive.index_count,
+                            1,
+                            mesh_offset.first_index + primitive.first_index,
+                            mesh_offset.vertex_offset as i32,
+                            0
+                        );
+                    }
+                }
+            }
+        } 
+
+        unsafe { device.end_command_buffer(command_buffer)?; }
         Ok(command_buffer)
     }
 

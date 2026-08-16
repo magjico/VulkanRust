@@ -59,21 +59,26 @@ pub fn create_command_pools(
 pub fn create_command_buffers(
     device: &Device,
     command_pools: &[vk::CommandPool],
-) -> Result<(Vec<vk::CommandBuffer>, Vec<Vec<vk::CommandBuffer>>)> {
+) -> Result<(Vec<vk::CommandBuffer>, Vec<vk::CommandBuffer>)> {
     let mut command_buffers = Vec::new();
+    let mut secondary_command_buffers = Vec::new();
 
     // command pool association
     for pool in command_pools {
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
+        let primary_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(*pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
-
-        let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
+        let command_buffer = unsafe { device.allocate_command_buffers(&primary_info)?[0] };
         command_buffers.push(command_buffer);
-    }
 
-    let secondary_command_buffers: Vec<Vec<vk::CommandBuffer>> = vec![vec![]; command_buffers.len()];
+        let secondary_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(*pool)
+            .level(vk::CommandBufferLevel::SECONDARY)
+            .command_buffer_count(1);
+        let secondary_command_buffer = unsafe { device.allocate_command_buffers(&secondary_info)?[0] };
+        secondary_command_buffers.push(secondary_command_buffer);
+    }
 
     Ok((command_buffers, secondary_command_buffers))
 }

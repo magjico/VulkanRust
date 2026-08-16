@@ -1,6 +1,7 @@
 use std::mem::offset_of;
 
 use crate::math::*;
+use crate::scene::Material;
 
 /// UBO to pass to the shaders
 /// 
@@ -54,6 +55,31 @@ pub struct PushConstants {
 
 impl PushConstants {
     pub const NO_SKIN: u32 = u32::MAX;
+
+    pub fn new(
+        model: Mat4,
+        ssbo_offset: u32,
+        material: Option<&Material>
+    ) -> Self {
+        Self {
+            model,
+            ssbo_offset,
+
+            metallic_factor:                    material.map(|m| m.metallic_factor).unwrap_or(1.0),
+            roughness_factor:                   material.map(|m| m.roughness_factor).unwrap_or(1.0),
+            _padding:                           0.0,
+            
+            base_color_factor:                  material.map(|m| m.base_color_factor).unwrap_or(Vec4::new(1.0, 1.0, 1.0, 1.0)),
+            base_color_texture_set:             material.map(|m| m.base_color_texture_set).unwrap_or(-1),
+            physical_descriptor_texture_set:    material.map(|m| m.metallic_roughness_texture_set).unwrap_or(-1),
+            normal_texture_set:                 material.map(|m| m.normal_texture_set).unwrap_or(-1),
+            occlusion_texture_set:              material.map(|m| m.occlusion_texture_set).unwrap_or(-1),
+            emissive_texture_set:               material.map(|m| m.emissive_texture_set).unwrap_or(-1),
+
+            alpha_mask:                         material.map(|m| m.alpha_mask).unwrap_or(0.0),
+            alpha_mask_cutoff:                  material.map(|m| m.alpha_mask_cutoff).unwrap_or(0.5)
+        }
+    }
 
 	#[inline]
 	pub fn get_frag_offset() -> u32 { offset_of!(PushConstants, metallic_factor) as u32 }

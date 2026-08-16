@@ -1,5 +1,4 @@
 use std::slice::{Iter, IterMut};
-use std::mem;
 
 use cgmath::SquareMatrix;
 use log::*;
