@@ -23,5 +23,6 @@ pub use ecs_resource::VulkanDevice;
 pub use ecs_resource::CurrentFrame;
 
 pub use ecs_buffer::SkinningBuffer;
+pub use ecs_buffer::InstanceBuffer;
 
 pub use ecs_context::ECSContext;

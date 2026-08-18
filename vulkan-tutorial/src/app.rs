@@ -23,14 +23,13 @@ use crate::constants::*;
 use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
-use crate::type_safety::{MeshOffset, ModelId, NodeId, MaterialId};
-use crate::render::{UniformBufferObject, TextureData, PushConstants, TexturesStorage, create_color_objects,
-                    create_depth_objects, create_swapchain, create_swapchain_image_views};
+use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
+use crate::render::{InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, create_color_objects, create_depth_objects, create_swapchain, create_swapchain_image_views};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, LightBuffer, Material, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
-use crate::math::{Vec3, Vec4};
+use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, Material, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
+use crate::math::{Vec3, Vec4, Mat4};
 
 //===================================================
 // App Manager
@@ -427,6 +426,9 @@ impl App {
 		if let Some(skinning_buffer) = self.ecs_context.world.get_resource::<SkinningBuffer>() {
 			skinning_buffer.destroy(&self.device);
 		}
+        if let Some(instance_buffer) = self.ecs_context.world.get_resource::<InstanceBuffer>() {
+            instance_buffer.destroy(&self.device);
+        }
 
         self.data.textures_data.destroy(&self.device);
         self.data.default_texture.destroy(&self.device);
@@ -807,6 +809,7 @@ impl PipelineData {
             descriptor_layout_data.global_set_layout,
             descriptor_layout_data.material_set_layout,
 			descriptor_layout_data.skin_set_layout,
+            descriptor_layout_data.instance_set_layout,
         )?;
 
         Ok(Self {
@@ -895,6 +898,7 @@ pub struct DescriptorLayoutData {
     pub global_set_layout: vk::DescriptorSetLayout,
     pub material_set_layout: vk::DescriptorSetLayout,
     pub skin_set_layout: vk::DescriptorSetLayout,
+    pub instance_set_layout: vk::DescriptorSetLayout,
 }
 
 impl DescriptorLayoutData {
@@ -904,8 +908,9 @@ impl DescriptorLayoutData {
         let global_set_layout = create_global_descriptor_set_layout(device)?;
         let material_set_layout = create_material_descriptor_set_layout(device)?;
         let skin_set_layout = create_skinning_descriptor_set_layout(device)?;
+        let instance_set_layout = create_instance_descriptor_set_layout(device)?;
 
-        Ok(Self { global_set_layout, material_set_layout, skin_set_layout })
+        Ok(Self { global_set_layout, material_set_layout, skin_set_layout, instance_set_layout })
     }
 
     #[rustfmt::skip]
@@ -914,6 +919,7 @@ impl DescriptorLayoutData {
         device.destroy_descriptor_set_layout(self.global_set_layout, None);
         device.destroy_descriptor_set_layout(self.material_set_layout, None);
         device.destroy_descriptor_set_layout(self.skin_set_layout, None);
+        device.destroy_descriptor_set_layout(self.instance_set_layout, None);
     }
 }
 
@@ -923,6 +929,7 @@ pub struct DescriptorData {
     pub global_descriptor_sets: Vec<vk::DescriptorSet>,
     pub material_descriptor_sets: Vec<vk::DescriptorSet>,
     pub skinning_descriptor_set: vk::DescriptorSet,
+	pub instance_descriptor_set: vk::DescriptorSet,
 }
 
 impl DescriptorData {
@@ -944,6 +951,9 @@ impl DescriptorData {
 
         let skinning_buffer = ecs_context.world.get_resource::<SkinningBuffer>()
             .ok_or_else(|| anyhow!("Skinning Buffer not found in ecs_context.world"))?;
+
+		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
+			.ok_or_else(|| anyhow!("Instance Buffer not found in ecs_context.world"))?;
 
         let descriptor_pool = create_descriptor_pool(
             device,
@@ -977,7 +987,14 @@ impl DescriptorData {
             skinning_buffer,
         )?;
 
-        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets, skinning_descriptor_set })
+		let instance_descriptor_set = create_instance_descriptor_set(
+			device,
+			descriptor_layout_data.instance_set_layout,
+			descriptor_pool,
+			instance_buffer
+		)?;
+
+        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets, skinning_descriptor_set, instance_descriptor_set })
     }
 
     pub fn update_global_descriptor_set(
@@ -1006,12 +1023,36 @@ impl DescriptorData {
 }
 
 #[derive(Clone, Debug)]
+struct EntityInstance {
+    model_id:       ModelId,
+    model:          Mat4,
+    ssbo_offset:    u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct DrawItem {
+    material_set_id:    MaterialSetId,
+    model_id:           ModelId,
+    material_id:        Option<MaterialId>,
+    node_matrix:        Mat4,
+    first_index:        u32,
+    vertex_offset:      u32,
+    index_count:        u32,
+    instance_first:     u32,
+    instance_count:     u32,
+}
+
+#[derive(Clone, Debug)]
 pub struct CommandData {
     pub command_pool: vk::CommandPool,
     pub command_pools: Vec<vk::CommandPool>,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub secondary_command_buffers: Vec<vk::CommandBuffer>,
     pub setup_command_buffer: vk::CommandBuffer,
+
+    draw_list:			Vec<DrawItem>,
+    instance_data:		Vec<InstanceData>,
+    sorted_entities:	Vec<EntityInstance>,
 }
 
 impl CommandData {
@@ -1037,7 +1078,11 @@ impl CommandData {
             command_pools,
             command_buffers,
             secondary_command_buffers,
-            setup_command_buffer
+            setup_command_buffer,
+
+            draw_list:			Vec::new(),
+            instance_data:		Vec::new(),
+			sorted_entities:	Vec::new(),
         })
     }
 
@@ -1167,6 +1212,93 @@ impl CommandData {
         image_index: usize,
         frame_index: usize
     ) -> Result<vk::CommandBuffer> {
+        // TODO: do a refactoring on the whole CommandData structure and functions
+		// TODO: instance_data, draw_list and sorted_entities should be define inside record_secondary_command_buffer not inside the struct CommandData
+        self.instance_data.clear();
+        self.draw_list.clear();
+		self.sorted_entities.clear();
+
+		let models = ecs_context.world.get_resource::<ModelsStorage>()
+            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+
+		// Step 1 - Draw Sorting
+		// 1.a - gather entities, sorted by model
+		self.sorted_entities.extend(
+			ecs_context.cached_renderable_query
+				.iter(&ecs_context.world)
+				.map(|(global, mesh_handle, skeleton)| {
+					let ssbo_offset = skeleton
+						.map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
+						.unwrap_or(PushConstants::NO_SKIN);
+
+					EntityInstance {
+						model_id: mesh_handle.model_id,
+						model: global.0,
+						ssbo_offset
+					}
+				})	
+		);
+
+		self.sorted_entities.sort_unstable_by_key(|e| e.model_id.0);
+
+		// 1.b - instance data + model ranges
+		let mut model_ranges: Vec<(ModelId, u32, u32)> = Vec::new();
+
+		for entity in &self.sorted_entities {
+			match model_ranges.last_mut() {
+				Some((last_id, _, count)) if *last_id == entity.model_id => *count += 1,
+				_ => model_ranges.push((entity.model_id, self.instance_data.len() as u32, 1)),
+			}
+
+			self.instance_data.push(
+				InstanceData {
+					model: entity.model,
+					ssbo_offset: entity.ssbo_offset,
+					_padding: [0; 3],
+				}
+			)
+		}
+
+		// 1.c - one DrawItem by (model, node, primitive)
+		for (model_id, instance_first, instance_count) in &model_ranges {
+			let model = models.get_model(*model_id);
+			let material_offset = models.get_material_offset(*model_id);
+
+			for (i, node) in model.graph.iter().enumerate() {
+				let Some(mesh) = &node.value.mesh else { continue };
+
+				let node_id = NodeId(i);
+				let node_matrix = model.get_global_matrix_of(node_id);
+				let mesh_offset = *buffers_data.mesh_offsets
+					.get(&(*model_id, node_id))
+					.unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", model_id, node_id));
+
+				for primitive in &mesh.primitives {
+					self.draw_list.push(DrawItem {
+						material_set_id: primitive.material_id
+							.map(|id| id.to_set_id(material_offset))
+							.unwrap_or(MaterialSetId(0)),
+						model_id: *model_id,
+						material_id: primitive.material_id, 
+						node_matrix,
+						first_index: mesh_offset.first_index + primitive.first_index,
+						vertex_offset: mesh_offset.vertex_offset,
+						index_count: primitive.index_count,
+						instance_first: *instance_first,
+						instance_count: *instance_count
+					});
+				}
+			}
+		}
+
+        self.draw_list.sort_unstable_by_key(|draw_item| draw_item.material_set_id);
+
+		// 1.d - Upload instance data
+		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
+			.ok_or_else(|| anyhow!("InstanceBuffer not found in world"))?;
+		instance_buffer.write(frame_index, &self.instance_data);
+
+        // Step 2 - Draw Binding with state tracking
         let command_buffer = self.secondary_command_buffers[image_index];
 
         let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
@@ -1207,94 +1339,79 @@ impl CommandData {
                 &[descriptor_data.skinning_descriptor_set],
                 &[]
             );
+
+			// entity binding
+			device.cmd_bind_descriptor_sets(
+				command_buffer,
+				vk::PipelineBindPoint::GRAPHICS,
+				pipeline_data.pipeline_layout,
+				3,
+				&[descriptor_data.instance_descriptor_set],
+				&[]
+			);
         }
 
-        let mut last_material: Option<MaterialId> = None;
+        let mut last_material: Option<MaterialSetId> = None;
 
-        let models = ecs_context.world.get_resource::<ModelsStorage>()
-            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+        for item in &self.draw_list {
+            // state tracking
+            if last_material != Some(item.material_set_id) {
+                last_material = Some(item.material_set_id);
 
-        for (global, mesh_handle, skeleton) in ecs_context.cached_renderable_query.iter(&ecs_context.world) {
-            let model = models.get_model(mesh_handle.model_id);
-            let material_offset = models.get_material_offset(mesh_handle.model_id);
-            let ssbo_offset = skeleton
-                .map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
-                .unwrap_or(PushConstants::NO_SKIN);
-
-            for (i, node) in model.graph.iter().enumerate() {
-                let Some(mesh) = &node.value.mesh else { continue };
-
-                let node_id = NodeId(i);
-                let final_model = global.0  * model.get_global_matrix_of(node_id);
-                let mesh_offset = *buffers_data.mesh_offsets
-                    .get(&(mesh_handle.model_id, node_id))
-                    .unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", mesh_handle.model_id, node_id));
-
-                for primitive in &mesh.primitives {
-                    let material_set_id = primitive.material_id
-                        .map(|id| id + material_offset)
-                        .unwrap_or(MaterialId(0));
-
-                    // state tracking
-                    if last_material != Some(material_set_id) {
-                        last_material = Some(material_set_id);
-
-                        unsafe {
-                            // materials binding
-                            device.cmd_bind_descriptor_sets(
-                                command_buffer,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                pipeline_data.pipeline_layout,
-                                1,
-                                &[descriptor_data.material_descriptor_sets[material_set_id.0]],
-                                &[]
-                            );
-                        }
-                    }
-
-                    let material = {
-                        if let Some(material_id) = primitive.material_id {
-                            Some(model.get_material(material_id))
-                        } else {
-                            None
-                        }
-                    };
-
-                    let push_constant = PushConstants::new(final_model, ssbo_offset, material);
-
-                    unsafe {
-                        let push_bytes = std::slice::from_raw_parts(
-                            &push_constant as *const PushConstants as *const u8,
-                            size_of::<PushConstants>()
-                        );
-                        
-                        let frag_offset = PushConstants::get_frag_offset();
-
-                        device.cmd_push_constants(
-                            command_buffer,
-                            pipeline_data.pipeline_layout,
-                            vk::ShaderStageFlags::VERTEX,
-                            0,
-                            &push_bytes[..frag_offset as usize]
-                        );
-                        device.cmd_push_constants(
-                            command_buffer,
-                            pipeline_data.pipeline_layout,
-                            vk::ShaderStageFlags::FRAGMENT,
-                            frag_offset,
-                            &push_bytes[frag_offset as usize..],
-                        );
-
-                        device.cmd_draw_indexed(
-                            command_buffer,
-                            primitive.index_count,
-                            1,
-                            mesh_offset.first_index + primitive.first_index,
-                            mesh_offset.vertex_offset as i32,
-                            0
-                        );
-                    }
+                unsafe {
+                    // materials binding
+                    device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_data.pipeline_layout,
+                        1,
+                        &[descriptor_data.material_descriptor_sets[item.material_set_id.0]],
+                        &[]
+                    );
                 }
+            }
+
+            let material = {
+                if let Some(material_id) = item.material_id {
+                    Some(models.get_model(item.model_id).get_material(material_id))
+                } else {
+                    None
+                }
+            };
+
+            let push_constant = PushConstants::new(item.node_matrix, material);
+
+            unsafe {
+                let push_bytes = std::slice::from_raw_parts(
+                    &push_constant as *const PushConstants as *const u8,
+                    size_of::<PushConstants>()
+                );
+                
+                let frag_offset = PushConstants::get_frag_offset();
+
+                device.cmd_push_constants(
+                    command_buffer,
+                    pipeline_data.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    &push_bytes[..frag_offset as usize]
+                );
+                device.cmd_push_constants(
+                    command_buffer,
+                    pipeline_data.pipeline_layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    frag_offset,
+                    &push_bytes[frag_offset as usize..],
+                );
+
+                device.cmd_draw_indexed(
+                    command_buffer,
+                    item.index_count,
+                    item.instance_count,
+                    item.first_index,
+                    item.vertex_offset as i32,
+                    item.instance_first
+                );
             }
         } 
 

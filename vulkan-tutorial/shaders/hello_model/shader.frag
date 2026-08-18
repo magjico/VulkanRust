@@ -31,18 +31,18 @@ layout(set = 1, binding = 3) uniform sampler2D occlusionTexture;
 layout(set = 1, binding = 4) uniform sampler2D emissiveTexture;
 
 layout(push_constant) uniform PushConstants {
-    layout(offset = 68)	 float metallicFactor;	// How metallic the surface is							(offset 68)
-    float roughnessFactor;						// How rough the surface is								(offset 72)
-	float _padding;								// Padding to align baseColorFactor						(offset 76)
-	vec4 baseColorFactor;						// RGB base color and alpha								(offset 80)
-    int baseColorTextureSet;					// Texture coordinate set for base color				(offset 96)
-    int physicalDescriptorTextureSet;			// Texture coordinate set for metallic-roughness		(offset 100)
-    int normalTextureSet;						// Texture coordinate set for normal map				(offset 104)
-    int occlusionTextureSet;					// Texture coordinate set for occlusion					(offset 108)
-    int emissiveTextureSet;						// Texture coordinate set for emission					(offset 112)
-	float alphaMask;							// Whether to use alpha masking							(offset 116)
-    float alphaMaskCutoff;						// Alpha threshold for masking							(offset 120)
-	// Total: 124 bytes / 128 bytes used.
+	layout(offset = 64) vec4 baseColorFactor;	// RGB base color and alpha								(offset 64)
+    float metallicFactor;						// How metallic the surface is							(offset 80)
+    float roughnessFactor;						// How rough the surface is								(offset 84)
+	
+    int baseColorTextureSet;					// Texture coordinate set for base color				(offset 88)
+    int physicalDescriptorTextureSet;			// Texture coordinate set for metallic-roughness		(offset 92)
+    int normalTextureSet;						// Texture coordinate set for normal map				(offset 96)
+    int occlusionTextureSet;					// Texture coordinate set for occlusion					(offset 100)
+    int emissiveTextureSet;						// Texture coordinate set for emission					(offset 104)
+	float alphaMask;							// Whether to use alpha masking							(offset 108)
+    float alphaMaskCutoff;						// Alpha threshold for masking							(offset 112)
+	// Total: 116 bytes / 128 bytes used (112 + 4).
 } pcs;
 
 // Take a look at the out vector inside shader.vert

@@ -19,11 +19,20 @@ pub const CORRECTION: Mat4 = Mat4::new(
 
 /// The maximum number of frames that can be processed concurrently.
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
+/// Maximum number of skinned instances that can be rendered simultaneously.
+/// Defines the slot count of the skinning `SlotAllocator`.
 pub const MAX_INSTANCES: u32 = 256;
+/// Maximum number of joints a single skeleton may have.
+/// Each instance reserves this many matrices, whether it uses them all or not.
 pub const MAX_JOINT_PER_INSTANCE: u32 = 64;
-pub const FRAME_STRIDE:     usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usize;
+/// Number of joint matrices reserved for one full frame (all instances).
+/// Used to offset writes and reads into the per-frame region of the skinning buffer.
+pub const FRAME_STRIDE: usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usize;
+/// Total joint matrix capacity of the skinning buffer, duplicated per frame in flight
+/// so the CPU never overwrites data a pending frame is still reading.
 pub const MAX_TOTAL_JOINTS: usize = FRAME_STRIDE * MAX_FRAMES_IN_FLIGHT;
+/// Total instance data capacity, duplicated per frame in flight for the same reason.
+pub const MAX_INSTANCES_DATA: usize = MAX_INSTANCES as usize * MAX_FRAMES_IN_FLIGHT;
 
 //==================================
 // Info Consts

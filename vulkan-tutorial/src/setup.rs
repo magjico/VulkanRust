@@ -47,14 +47,15 @@ pub fn create_descriptor_pool(
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(
-            1							// Skin SSBOs size - a unique global set
-            + swapchain_images_count 	// Light SSBO size - 1 for each swapchain image
+            1							// Skin SSBOs size      -> a unique global set
+            + 1                         // Instance SSBOs size  -> a unique global set
+            + swapchain_images_count 	// Light SSBO size      -> 1 for each swapchain image
         );
 
     let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count + materials_count + 1);
+        .max_sets(swapchain_images_count + materials_count + 1 + 1);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -233,6 +234,38 @@ pub fn create_skinning_descriptor_set(
     Ok(descriptor_set)
 }   
 
+pub fn create_instance_descriptor_set(
+    device: &Device,
+    instance_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    instance_buffer: &InstanceBuffer
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[instance_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let buffer_info = &[
+        *vk::DescriptorBufferInfo::builder()
+            .buffer(instance_buffer.buffer)
+            .offset(0)
+            .range(InstanceBuffer::get_range())
+    ];
+
+    let ssbo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .dst_array_element(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(buffer_info);
+
+    unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
+    
+    Ok(descriptor_set)
+}
+
 //===============================================
 // Sync objects
 //===============================================
@@ -297,10 +330,12 @@ pub fn init_ecs_context(
 ) -> Result<ECSContext> {
     let mut ecs_context = ECSContext::init();
     let skinning_buff = SkinningBuffer::create(instance, device, physical_device)?;
+    let instance_buff = InstanceBuffer::create(instance, device, physical_device)?;
 
     // world
     ecs_context.world.insert_resource(VulkanDevice(device.clone()));
     ecs_context.world.insert_resource(skinning_buff);
+    ecs_context.world.insert_resource(instance_buff);
 	ecs_context.world.insert_resource(SSBOSkiningAllocator(SlotAllocator::new(MAX_INSTANCES, MAX_JOINT_PER_INSTANCE)));
 	ecs_context.world.insert_resource(Time::default());
     ecs_context.world.insert_resource(CurrentFrame::default());

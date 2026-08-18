@@ -1,5 +1,10 @@
 #version 450
 
+struct InstanceData {
+    mat4 model;
+    uint ssboOffset;
+};
+
 // check uniform.rs inside render to understand UBO.
 layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 view;
@@ -17,9 +22,12 @@ layout(set = 2, binding = 0) readonly buffer JointMats {
     mat4 joints[];
 };
 
+layout(set = 3, binding = 0) readonly buffer Instances {
+    InstanceData instances[];
+};
+
 layout(push_constant) uniform PushConstants {
-    mat4 model;
-    uint ssboOffset;
+    mat4 nodeMatrix;
 } pcs;
 
 const uint NO_SKIN = 0xFFFFFFFFu;
@@ -40,18 +48,18 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec2 fragUV0;
 layout(location = 3) out vec2 fragUV1;
 layout(location = 4) out vec4 fragTangent;
-// layout(location = 4) out vec3 fragColor;
 
 void main() {
-    mat4 finalModel = pcs.model;
+    InstanceData inst = instances[gl_InstanceIndex];
 
-    // TODO: change -1 for something else
-    if (pcs.ssboOffset != NO_SKIN) {
+    mat4 finalModel = inst.model * pcs.nodeMatrix;
+
+    if (inst.ssboOffset != NO_SKIN) {
         mat4 skinMat =
-            inJointWeight.x * joints[pcs.ssboOffset + inJointIndices.x] +
-            inJointWeight.y * joints[pcs.ssboOffset + inJointIndices.y] +
-            inJointWeight.z * joints[pcs.ssboOffset + inJointIndices.z] +
-            inJointWeight.w * joints[pcs.ssboOffset + inJointIndices.w];
+            inJointWeight.x * joints[inst.ssboOffset + inJointIndices.x] +
+            inJointWeight.y * joints[inst.ssboOffset + inJointIndices.y] +
+            inJointWeight.z * joints[inst.ssboOffset + inJointIndices.z] +
+            inJointWeight.w * joints[inst.ssboOffset + inJointIndices.w];
 
         finalModel *= skinMat;
     }
@@ -64,9 +72,6 @@ void main() {
     fragUV0 = inUV0;
     fragUV1 = inUV1;
     fragTangent = vec4(normalize(normalMat * inTangent.xyz), inTangent.w);
-    // fragColor = inColor;
-    
-    float scale = (joints.length() == 16384) ? 1.0 : 3.0;
-    // gl_Position = ubo.proj * ubo.view * pcs.model * vec4(inPosition * scale, 1.0);
+
     gl_Position = ubo.proj * ubo.view * worldPos;
 }

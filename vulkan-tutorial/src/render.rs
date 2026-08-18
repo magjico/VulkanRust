@@ -18,6 +18,7 @@ pub use texture::TexturesStorage;
 
 pub use uniform::UniformBufferObject;
 pub use uniform::PushConstants;
+pub use uniform::InstanceData;
 
 pub use swapchain::create_swapchain;
 pub use swapchain::create_swapchain_image_views;

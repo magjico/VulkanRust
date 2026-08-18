@@ -27,7 +27,6 @@ use crate::render::*;
 use crate::scene::*;
 
 // region load texture file
-
 /// Create a texture image from a .png.
 ///
 /// *__TODO:__ add the possibility to manually select the mipmaps level.*
@@ -84,7 +83,6 @@ pub fn load_texture(
 // endregion
 
 // region load obj
-
 /// Load a .obj 3D model and return its vertices and the associated indexes.
 /// 
 /// ## Arguments
@@ -193,7 +191,6 @@ pub fn load_3d_content(
 // endregion
 
 // region load glTF
-
 /// check if the texture mimetype is ktx2
 fn is_ktx2(image_src: &Source) -> bool {
     match image_src {
@@ -347,7 +344,7 @@ fn load_gltf_textures(
             continue 'texture;
         };
 
-        // 3 - Create Vulkan Image, Memory and View
+        // 3 - Create Vulkan Image, Memory, View and Sampler
         let (texture_image, texture_image_memory) = create_texture_image(
             instance,
             device,

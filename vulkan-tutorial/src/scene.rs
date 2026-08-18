@@ -31,6 +31,7 @@ pub use light::Light;
 pub use light::LightBuffer;
 
 pub use ecs::SkinningBuffer;
+pub use ecs::InstanceBuffer;
 pub use ecs::Time;
 pub use ecs::SSBOSkiningAllocator;
 pub use ecs::ModelsStorage;

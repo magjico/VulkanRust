@@ -12,7 +12,6 @@ use crate::ops::{FlatGraph, Node};
 use super::{Mesh, Animation, Material, PathType};
 
 // region Model-Graph
-
 /// Describe a type of model node transformation for animation
 #[derive(Debug, Clone, Copy)]
 pub enum NodeTransform {

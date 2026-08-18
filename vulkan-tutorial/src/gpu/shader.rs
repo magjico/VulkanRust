@@ -4,6 +4,7 @@ use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
 
 use crate::scene::Vertex;
+use crate::render::PushConstants;
 
 //===========================================
 // Descriptor Set
@@ -74,6 +75,22 @@ pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::Desc
     Ok(descriptor_set_layout)
 }
 
+/// create a unique descriptor set layout for all model instances
+pub fn create_instance_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+}
+
 //===========================================
 // Shader pipeline and module
 //===========================================
@@ -97,6 +114,7 @@ pub fn create_pipeline(
     global_set_layout: vk::DescriptorSetLayout,
     material_set_layout: vk::DescriptorSetLayout,
     skin_set_layout: vk::DescriptorSetLayout,
+    instance_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     // Stages
     let vert_shader_module = create_shader_module(device, &vert[..])?;
@@ -187,18 +205,21 @@ pub fn create_pipeline(
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
     // Constant Push
+    let frag_offset = PushConstants::get_frag_offset();
+    let frag_size = PushConstants::get_frag_size();
+
     let vert_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::VERTEX)
         .offset(0)
-        .size(68 /* Mat4 (16 x 4 bytes float) + 4 bytes int*/);
+        .size(frag_offset);
 
     let frag_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .offset(68)
-        .size(56);
+        .offset(frag_offset)
+        .size(frag_size);
 
     // Layout
-    let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout];
+    let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout, instance_set_layout];
     let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
         .push_constant_ranges(push_constant_ranges)
