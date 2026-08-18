@@ -1,46 +1,192 @@
 use anyhow::{Result, anyhow};
-use cgmath::{Deg, vec3, point3};
+use log::*;
 
+use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
-use winit::window::Window;
+use winit::dpi::LogicalSize;
+use winit::application::ApplicationHandler;
+use winit::window::{Window, WindowId};
+use winit::event_loop::ActiveEventLoop;
+use winit::event::{DeviceEvent, WindowEvent, DeviceId, StartCause};
+use winit_input_helper::WinitInputHelper;
+
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::window as vk_window;
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::{KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
-                    ExtDebugUtilsExtensionInstanceCommands};
+use vulkanalia::vk::{ExtDebugUtilsExtensionInstanceCommands, KhrDynamicRenderingExtensionDeviceCommands,
+                    KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
+                    KhrSynchronization2ExtensionDeviceCommands};
 
-use crate::constants::{CORRECTION, DEVICE_EXTENSIONS, FRAG, MAX_FRAMES_IN_FLIGHT, MESH_PATH, TEXTURE_PATH, VALIDATION_ENABLED, VALIDATION_LAYER, VERT};
-use crate::assets::load_obj_model;
-use crate::gpu::{QueueFamilyIndices, create_instance, pick_best_physical_device,
-                    get_max_msaa_samples, create_logical_device, create_render_pass,
-                    create_descriptor_set_layout, create_pipeline};
-use crate::render::{UniformBufferObject, create_swapchain, create_swapchain_image_views,
-                    create_color_objects, create_depth_objects, create_texture_image,
-                    create_texture_image_view, create_texture_sampler};
-use crate::resources::{create_command_pool, create_command_pools, create_framebuffers,
-                        create_setup_command_buffer, create_interleaved_buffer, create_uniform_buffers,
-                        create_command_buffers, destroy_buffers};
-use crate::setup::{create_descriptor_pool, create_descriptor_sets, create_sync_objects};
-use crate::geometry::Vertex;
-use crate::math::Mat4;
+use crate::constants::*;
+use crate::setup::*;
+use crate::gpu::*;
+use crate::input::InputBindings;
+use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
+use crate::render::{InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, create_color_objects, create_depth_objects, create_swapchain, create_swapchain_image_views};
+use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
+                        create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
+                        destroy_buffers};
+use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, Material, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
+use crate::math::{Vec3, Vec4, Mat4};
+
+//===================================================
+// App Manager
+//===================================================
+
+/// Manage [App] and [Window] event interaction.
+#[derive(Default)]
+pub struct AppManager {
+    pub window: Option<Window>,
+    pub app: Option<App>,
+    pub input: WinitInputHelper,
+	pub last_frame_time: Option<Instant>,
+
+    pub fps_accumulator: f32,
+    pub fps_frame_count: u32,
+}
+
+
+impl ApplicationHandler for AppManager {
+    fn window_event(
+        &mut self,
+        elwt: &ActiveEventLoop,
+        _: WindowId,
+        event: WindowEvent,
+    ) {
+        if self.input.process_window_event(&event) {
+            let Some(window) = self.window.as_mut() else { return };
+            let Some(app) = self.app.as_mut() else { return };
+
+            match event {
+                WindowEvent::RedrawRequested if !window.is_minimized().unwrap() && !elwt.exiting() => {
+                    app.render(&window).unwrap();
+                }
+                WindowEvent::Resized(size) => if size.width != 0 && size.height != 0 {
+                    app.resized = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _: &ActiveEventLoop,
+        _: DeviceId,
+        event: DeviceEvent,
+    ) {
+        self.input.process_device_event(&event);
+    }
+
+    fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {
+        self.input.step();
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.input.end_step();
+
+        if self.input.close_requested() || self.input.destroyed() {
+            event_loop.exit();
+            return;
+        }
+
+		if let Some(app) = self.app.as_mut() {
+			let now = Instant::now();
+			let delta_time = self.last_frame_time
+				.map(|t| now.duration_since(t).as_secs_f32())
+				.unwrap_or(0.0);
+
+            self.fps_accumulator += delta_time;
+            self.fps_frame_count += 1;
+
+            if self.fps_accumulator >= 1.0 && self.fps_frame_count > 0 {
+                let fps = self.fps_frame_count as f32 / self.fps_accumulator;
+                let ms = 1000.0 * self.fps_accumulator / self.fps_frame_count as f32;
+                info!("{:.1} fps ({:.2} ms/frame)", fps, ms);
+
+                self.fps_accumulator = 0.0;
+                self.fps_frame_count = 0;
+            }
+
+			self.last_frame_time = Some(now);
+
+            let ECSContext { world, schedule, .. } = &mut app.ecs_context;
+
+            // ECS - update time then execute the schedule
+            if let Some(mut ecs_time) = world.get_resource_mut::<Time>() {
+                ecs_time.0 = delta_time;
+            }
+
+            if let Some(mut c_frame) = world.get_resource_mut::<CurrentFrame>() {
+                c_frame.0 = app.frame;
+            }
+
+            schedule.run(world);
+
+            //  cameras
+			for (keycode, action) in &app.input_binding.camera_bindings {
+				if self.input.key_held(*keycode) {
+					app.data.camera_data.process_keyboard(*action, delta_time);
+				}
+			}
+
+            // TODO: change this to adapt to the type of camera & app
+            if self.input.mouse_held(winit::event::MouseButton::Right) {
+                let (dx, dy) = self.input.mouse_diff();
+                app.data.camera_data.process_mouse_movement(dx, dy, Some((-89.0, 89.0)));
+            }
+
+            let zoom = self.input.scroll_diff().1;
+            if zoom != 0.0 {
+                app.data.camera_data.process_mouse_scroll(zoom);
+            }
+		} 
+
+        if let Some(window) = self.window.as_mut() {
+            window.request_redraw();
+        }
+    }
+    
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            let window =
+                event_loop.create_window(
+                    Window::default_attributes()
+                        .with_title("Vulkan App")
+                        .with_inner_size(LogicalSize::new(1024, 768))   
+                ).unwrap();
+            
+            self.app = Some(App::create(&window).unwrap());
+			self.last_frame_time = Some(Instant::now());
+            self.window = Some(window);
+        }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.app.as_mut() {
+            unsafe { app.destroy() }; 
+        }
+    }
+}
 
 //===================================================
 // App
 //===================================================
 
 /// Vulkan app.
-#[derive(Clone, Debug)]
 pub struct App {
     pub entry: Entry,
     pub instance: Instance,
     pub data: AppData,
     pub device: Device,
+    pub ecs_context: ECSContext,
     pub frame: usize,
     pub resized: bool,
     pub start: Instant,
     pub models: usize,
+    pub input_binding: InputBindings,
 }
 
 impl App {
@@ -100,7 +246,10 @@ impl App {
             queue_family_indices
         );
 
-        // 3. swapchain
+        // 3. ECS Context
+        let mut ecs_context = init_ecs_context(&device, &instance, physical_device)?;
+
+        // 4. swapchain
         let swapchain_data = SwapchainData::create(
             window,
             &instance,
@@ -109,22 +258,6 @@ impl App {
             surface,
             &mut device_data.queue_family_indices
         )?;
-
-        // 4. pipeline
-        let descriptor_set_layout = create_descriptor_set_layout(&device)?;
-
-        let pipeline_data = PipelineData::create(
-            &instance,
-            &device,
-            physical_device,
-            swapchain_data.swapchain_format,
-            swapchain_data.swapchain_extent,
-            descriptor_set_layout,
-            msaa_samples,
-            VERT,
-            FRAG
-        )?;
-
 
         // 5. command
         let command_data = CommandData::create(
@@ -154,100 +287,155 @@ impl App {
             msaa_samples,
         )?;
 
-        // 8. framebuffers
-        let framebuffers = create_framebuffers(
+        // 8. pipeline
+        let descriptor_layout_data = DescriptorLayoutData::create(&device)?;
+
+        let pipeline_data = PipelineData::create(
             &device,
-            pipeline_data.render_pass,
-            &swapchain_data.swapchain_image_views,
-            color_data.color_image_view,
-            depth_data.depth_image_view,
-            swapchain_data.swapchain_extent.width,
-            swapchain_data.swapchain_extent.height,
+            swapchain_data.swapchain_format,
+            swapchain_data.swapchain_extent,
+            depth_data.depth_format,
+            &descriptor_layout_data,
+            msaa_samples,
+            VERT,
+            FRAG
         )?;
         
-        // 9. texture
-        let texture_data = TextureData::create(
-            &instance,
-            &device,
-            physical_device,
-            command_data.setup_command_buffer,
-            graphics_queue,
-            TEXTURE_PATH
-        )?;
+		// 8 - 9. load .glb models and textures
+		let mut models = ModelsStorage::new();
+		let mut textures = TexturesStorage::new();
+		let mut model_registry = ModelRegistry::new();
 
-        // 10. model
-        let (vertices, indices) = load_obj_model(MESH_PATH)?;
-        let models_data = ModelsData::create(vertices, indices); 
+		load_gltf_models(
+			&device,
+			&instance,
+			physical_device,
+			command_data.setup_command_buffer,
+			graphics_queue,
+			&mut models,
+			&mut textures,
+			&mut model_registry
+		)?;
 
-        // 11. buffers
+		let default_texture = create_default_texture(
+			&instance,
+			&device,
+			physical_device,
+			command_data.setup_command_buffer,
+			graphics_queue
+		)?;
+
+        // 10. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
             physical_device,
-            &models_data.vertices,
-            &models_data.indices,
+            &models,
             command_data.setup_command_buffer,
             graphics_queue,
             swapchain_data.swapchain_images.len(),
         )?;
 
+		// 11. lights
+        // TODO: implement multiple type of light
+        let lights = create_default_lightning(&instance, &device, physical_device)?;
+
         // 12. descriptor
         let descriptor_data = DescriptorData::create(
             &device,
-            descriptor_set_layout,
+            &ecs_context,
+            &descriptor_layout_data,
             &buffers_data.uniform_buffers,
-            texture_data.texture_image_view,
-            texture_data.texture_sampler,
-            swapchain_data.swapchain_images.len()
+            &textures,
+            &default_texture,
+            &models,
+            &lights,
+            swapchain_data.swapchain_images.len(),
         )?;
         
-        // 13. sync
+		// 13. ECS - final init + instance spawn
+		ecs_context.world.insert_resource(models);
+		ecs_context.world.insert_resource(Time(0.0));
+		spawn_from_cesium_man_instances(&mut ecs_context.world, &model_registry)?;
+        spawn_from_brain_stem_instance(&mut ecs_context.world, &model_registry)?;
+
+        // 14. sync
         let sync_data = SyncData::create(
             &device,
             MAX_FRAMES_IN_FLIGHT,
             swapchain_data.swapchain_images.len(),
         )?;
 
+        // 15. Camera
+        // TODO: support multiple cameras
+        let mut camera = CameraBuilder::new()
+            .position(Vec3::new(0.0,8.0, 4.0))
+            .movement_speed(10.0)
+            .mouse_sensitivity(0.02)
+            .build();
+
+        camera.look_at(Vec3::new(0.0, 0.0, 0.75), None);
+
+
         let data = AppData {
             surface,
             device_data,
             swapchain_data,
-            descriptor_set_layout,
+            descriptor_layout_data,
             pipeline_data,
-            framebuffers,
-            models_data,
             buffers_data,
             descriptor_data,
             command_data,
             sync_data,
-            texture_data,
+            textures_data: textures,
             depth_data,
             color_data,
-            messenger
+            camera_data: camera,
+            light_data: lights,
+            messenger,
+            default_texture
         };
+
+        // IV - inputs
+        // TODO: make InputBindings able to have None so we can have a default if we can't parse.
+        let input_binding = InputBindings::bind_from_file(&INPUT_PATH)?;
 
         Ok( Self {
             entry,
             instance,
             data,
             device,
+            ecs_context,
             frame: 0,
             resized: false,
             start: Instant::now(),
-            models: 1
+            models: 1,
+            input_binding,
         })
     }
 
-    /// Destroys our Vulkan app.
+    /// Destroy Vulkan app.
     #[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
 
-        // Destroy Appdata
         self.destroy_swapchain();
-        self.data.texture_data.destroy(&self.device);
-        self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
+
+        // Destroy Appdata
+		if let Some(skinning_buffer) = self.ecs_context.world.get_resource::<SkinningBuffer>() {
+			skinning_buffer.destroy(&self.device);
+		}
+        if let Some(instance_buffer) = self.ecs_context.world.get_resource::<InstanceBuffer>() {
+            instance_buffer.destroy(&self.device);
+        }
+
+        self.data.textures_data.destroy(&self.device);
+        self.data.default_texture.destroy(&self.device);
+        self.data.light_data.destroy(&self.device);
+        
+        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
+        self.data.descriptor_layout_data.destroy(&self.device);
         self.data.sync_data.destroy(&self.device);
         destroy_buffers(&self.device, &[self.data.buffers_data.interleaved_buffer], &[self.data.buffers_data.interleaved_buffer_memory]);
         self.data.command_data.destroy(&self.device);
@@ -258,16 +446,15 @@ impl App {
         if let Some(messenger) = self.data.messenger {
             self.instance.destroy_debug_utils_messenger_ext(messenger, None);
         }
-        self.instance.destroy_instance(None);
 
+        self.instance.destroy_instance(None);
     }
 
     /// Destroys the parts of our Vulkan app related to the swapchain.
     #[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn destroy_swapchain(&mut self) {
-        self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
-
+        // self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         destroy_buffers(
             &self.device,
             &self.data.buffers_data.uniform_buffers,
@@ -276,7 +463,6 @@ impl App {
 
         self.data.depth_data.destroy(&self.device);
 		self.data.color_data.destroy(&self.device);
-        self.data.framebuffers.iter().for_each(|f| self.device.destroy_framebuffer(*f, None));
         self.data.pipeline_data.destroy(&self.device);
         self.data.swapchain_data.destroy(&self.device);
     }
@@ -298,18 +484,6 @@ impl App {
             &mut self.data.device_data.queue_family_indices,
         )?;
 
-        self.data.pipeline_data = PipelineData::create(
-            &self.instance,
-            &self.device,
-            self.data.device_data.physical_device,
-            self.data.swapchain_data.swapchain_format,
-            self.data.swapchain_data.swapchain_extent,
-            self.data.descriptor_set_layout,
-            self.data.device_data.msaa_samples,
-            VERT,
-            FRAG,
-        )?;
-
         self.data.color_data = ColorData::create(
             &self.instance,
             &self.device,
@@ -329,14 +503,15 @@ impl App {
             self.data.device_data.msaa_samples,
         )?;
 
-        self.data.framebuffers = create_framebuffers(
+        self.data.pipeline_data = PipelineData::create(
             &self.device,
-            self.data.pipeline_data.render_pass,
-            &self.data.swapchain_data.swapchain_image_views,
-            self.data.color_data.color_image_view,
-            self.data.depth_data.depth_image_view,
-            self.data.swapchain_data.swapchain_extent.width,
-            self.data.swapchain_data.swapchain_extent.height,
+            self.data.swapchain_data.swapchain_format,
+            self.data.swapchain_data.swapchain_extent,
+            self.data.depth_data.depth_format,
+            &self.data.descriptor_layout_data,
+            self.data.device_data.msaa_samples,
+            VERT,
+            FRAG,
         )?;
 
         (self.data.buffers_data.uniform_buffers, self.data.buffers_data.uniform_buffers_memory) = create_uniform_buffers(
@@ -346,13 +521,9 @@ impl App {
             self.data.swapchain_data.swapchain_images.len()
         )?;
 
-        self.data.descriptor_data = DescriptorData::create(
+        self.data.descriptor_data.update_global_descriptor_set(
             &self.device,
-            self.data.descriptor_set_layout,
-            &self.data.buffers_data.uniform_buffers,
-            self.data.texture_data.texture_image_view,
-            self.data.texture_data.texture_sampler,
-            self.data.swapchain_data.swapchain_images.len()
+            &self.data.buffers_data.uniform_buffers
         )?;
 
         (self.data.command_data.command_buffers, self.data.command_data.secondary_command_buffers) = create_command_buffers(
@@ -397,16 +568,16 @@ impl App {
         // Update commands buffers
         self.data.command_data.update_command_buffer(
             &self.device,
-            &self.data.framebuffers,
-            &self.data.models_data.indices,
+			&mut self.ecs_context,
             &self.data.pipeline_data,
             &self.data.buffers_data,
-            &self.data.descriptor_data.descriptor_sets,
-            self.data.swapchain_data.swapchain_extent,
-            self.data.pipeline_data.render_pass,
+            &self.data.swapchain_data,
+            &self.data.color_data,
+            &self.data.depth_data,
+            &self.data.descriptor_data,
+            self.data.device_data.msaa_samples,
             image_index,
-            self.models,
-            self.start,
+            self.frame
         )?;
 
         // Update UBO
@@ -451,20 +622,28 @@ impl App {
     }
 
     fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        let view = Mat4::look_at_rh(
-            point3(6.0, 0.0, 2.0),
-            point3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 1.0)
-        );
+        let view = self.data.camera_data.get_view_matrix();
 
-        let proj = CORRECTION * cgmath::perspective(
-            Deg(45.0),
+        let proj = CORRECTION * self.data.camera_data.get_projection_matrix(
             self.data.swapchain_data.swapchain_extent.width as f32 / self.data.swapchain_data.swapchain_extent.height as f32,
-            0.1,
-            10.0
+            Some(0.1),
+            Some(1000.0)
         );
 
-        let ubo = UniformBufferObject { view, proj };
+        let cam_pos = {
+            let pos = self.data.camera_data.get_position();
+            Vec4::new(pos.x, pos.y, pos.z, 1.0)
+        };
+
+        let ubo = UniformBufferObject {
+            view,
+            proj,
+            cam_pos,
+            exposure: 4.5,
+            gamma: 2.2,
+            prefiltered_cube_mip_levels: 1.0,
+            scale_ibl_ambient: 1.0
+        };
 
         unsafe {
             let memory = self.device.map_memory(
@@ -497,12 +676,10 @@ pub struct AppData {
     // Swapchain
     pub swapchain_data: SwapchainData,
     // Pipeline
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_layout_data: DescriptorLayoutData,
     pub pipeline_data: PipelineData,
-    // Framebuffers
-    pub framebuffers: Vec<vk::Framebuffer>,
-    // Models
-    pub models_data: ModelsData,
+    // Textures
+	pub textures_data: TexturesStorage,
     // Buffers
     pub buffers_data: BuffersData,
     // Descriptor
@@ -511,14 +688,19 @@ pub struct AppData {
     pub command_data: CommandData,
     // Sync Objects
     pub sync_data: SyncData,
-	// Texture
-	pub texture_data: TextureData,
     // Depth
     pub depth_data: DepthData,
 	// Render target (now only use for MSAA)
 	pub color_data: ColorData,
+    // Camera
+    pub camera_data: Camera,
+    // Lights
+    pub light_data: LightBuffer,
     // Debug
     pub messenger: Option<vk::DebugUtilsMessengerEXT>,
+
+    // app-data const
+    pub default_texture: TextureData,
 }
 
 #[derive(Clone, Debug)]
@@ -601,44 +783,36 @@ impl SwapchainData {
 
 #[derive(Clone, Debug)]
 pub struct PipelineData {
-    pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 }
 
 impl PipelineData {
     pub fn create(
-        instance: &Instance,
         device: &Device,
-        physical_device: vk::PhysicalDevice,
         swapchain_format: vk::Format,
         swapchain_extent: vk::Extent2D,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        depth_format: vk::Format,
+        descriptor_layout_data: &DescriptorLayoutData,
         msaa_samples: vk::SampleCountFlags,
         vert: &[u8],
         frag: &[u8],
     ) -> Result<Self> {
-        let render_pass = create_render_pass(
-            instance,
-            device,
-            physical_device,
-            swapchain_format,
-            msaa_samples
-        )?;
-
-        
         let (pipeline, pipeline_layout) = create_pipeline(
             &device,
             vert,
             frag,
-            render_pass,
             swapchain_extent,
+            swapchain_format,
+            depth_format,
             msaa_samples,
-            descriptor_set_layout
+            descriptor_layout_data.global_set_layout,
+            descriptor_layout_data.material_set_layout,
+			descriptor_layout_data.skin_set_layout,
+            descriptor_layout_data.instance_set_layout,
         )?;
 
         Ok(Self {
-            render_pass,
             pipeline_layout,
             pipeline
         })
@@ -648,25 +822,6 @@ impl PipelineData {
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
-        device.destroy_render_pass(self.render_pass, None);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ModelsData {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-}
-
-impl ModelsData {
-    pub fn create(
-        vertices: Vec<Vertex>,
-        indices: Vec<u32>,
-    ) -> Self {
-        Self {
-            vertices,
-            indices,
-        }
     }
 }
 
@@ -674,7 +829,8 @@ impl ModelsData {
 pub struct BuffersData {
     pub interleaved_buffer: vk::Buffer,
     pub interleaved_buffer_memory: vk::DeviceMemory,
-    pub index_offset: u64,
+    pub interleaved_offset: u64,
+    pub mesh_offsets: HashMap<(ModelId, NodeId), MeshOffset>, // key: (model_id, node_id) -> value: (vert_offset, index_offset) 
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
 }
@@ -684,21 +840,41 @@ impl BuffersData {
         instance: &Instance,
         device: &Device,
         physical_device: vk::PhysicalDevice,
-        vertices: &[Vertex],
-        indices: &[u32],
+        models: &ModelsStorage,
         setup_command_buffer: vk::CommandBuffer,
         graphics_queue: vk::Queue,
         images_count: usize,
     ) -> Result<Self> {
-        let (interleaved_buffer, interleaved_buffer_memory, index_offset) = create_interleaved_buffer(
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut mesh_offsets = HashMap::new();
+
+        for (model_id, model) in models.iter().enumerate() {
+            let model_id = ModelId(model_id);
+
+            for (node_idx, node) in model.graph.iter().enumerate() {
+                if let Some(mesh) = &node.value.mesh {
+                    mesh_offsets.insert(
+                        (model_id, NodeId(node_idx)),
+                        MeshOffset {vertex_offset: vertices.len() as u32, first_index: indices.len() as u32 }
+                    );
+
+                    vertices.extend_from_slice(&mesh.vertices);
+                    indices.extend_from_slice(&mesh.indices);
+                }
+            }
+        }
+
+        let (interleaved_buffer, interleaved_buffer_memory, interleaved_offset) = create_interleaved_buffer(
             instance,
             device,
             physical_device,
-            vertices,
-            indices,
+            &vertices,
+            &indices,
             setup_command_buffer,
             graphics_queue,
         )?;
+
         let (uniform_buffers, uniform_buffers_memory) = create_uniform_buffers(
             instance,
             device,
@@ -709,7 +885,8 @@ impl BuffersData {
         Ok(Self {
             interleaved_buffer,
             interleaved_buffer_memory,
-            index_offset,
+            interleaved_offset,
+            mesh_offsets,
             uniform_buffers,
             uniform_buffers_memory,
         })
@@ -717,33 +894,152 @@ impl BuffersData {
 }
 
 #[derive(Clone, Debug)]
+pub struct DescriptorLayoutData {
+    pub global_set_layout: vk::DescriptorSetLayout,
+    pub material_set_layout: vk::DescriptorSetLayout,
+    pub skin_set_layout: vk::DescriptorSetLayout,
+    pub instance_set_layout: vk::DescriptorSetLayout,
+}
+
+impl DescriptorLayoutData {
+    pub fn create(
+        device: &Device,
+    ) -> Result<Self> {
+        let global_set_layout = create_global_descriptor_set_layout(device)?;
+        let material_set_layout = create_material_descriptor_set_layout(device)?;
+        let skin_set_layout = create_skinning_descriptor_set_layout(device)?;
+        let instance_set_layout = create_instance_descriptor_set_layout(device)?;
+
+        Ok(Self { global_set_layout, material_set_layout, skin_set_layout, instance_set_layout })
+    }
+
+    #[rustfmt::skip]
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&mut self, device: &Device) {
+        device.destroy_descriptor_set_layout(self.global_set_layout, None);
+        device.destroy_descriptor_set_layout(self.material_set_layout, None);
+        device.destroy_descriptor_set_layout(self.skin_set_layout, None);
+        device.destroy_descriptor_set_layout(self.instance_set_layout, None);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct DescriptorData {
     pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub global_descriptor_sets: Vec<vk::DescriptorSet>,
+    pub material_descriptor_sets: Vec<vk::DescriptorSet>,
+    pub skinning_descriptor_set: vk::DescriptorSet,
+	pub instance_descriptor_set: vk::DescriptorSet,
 }
 
 impl DescriptorData {
-    pub fn create(
+    pub fn  create(
         device: &Device,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        ecs_context: &ECSContext,
+        descriptor_layout_data: &DescriptorLayoutData,
         uniform_buffers: &[vk::Buffer],
-        texture_image_view: vk::ImageView,
-        texture_sampler: vk::Sampler,
+        textures: &TexturesStorage,
+        default_texture: &TextureData,
+		models: &ModelsStorage,
+        light_buffer: &LightBuffer,
         images_count: usize,
     ) -> Result<Self> {
-        let descriptor_pool = create_descriptor_pool(device, images_count as u32)?;
-        let descriptor_sets = create_descriptor_sets(
+		let materials: Vec<&Material> = models.iter()
+			.flat_map(|model| model.materials_iter())
+			.collect();
+        let materials_count = materials.len();
+
+        let skinning_buffer = ecs_context.world.get_resource::<SkinningBuffer>()
+            .ok_or_else(|| anyhow!("Skinning Buffer not found in ecs_context.world"))?;
+
+		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
+			.ok_or_else(|| anyhow!("Instance Buffer not found in ecs_context.world"))?;
+
+        let descriptor_pool = create_descriptor_pool(
+            device,
+            images_count		as u32,
+            materials_count		as u32,
+        )?;
+        
+        let global_descriptor_sets = create_global_descriptor_sets(
             device,
             images_count,
-            descriptor_set_layout,
+            descriptor_layout_data.global_set_layout,
             descriptor_pool,
             uniform_buffers,
-            texture_image_view,
-            texture_sampler
+            light_buffer,
         )?;
 
-        Ok(Self { descriptor_pool, descriptor_sets })
+        let material_descriptor_sets = create_material_descriptor_sets(
+            device,
+            descriptor_layout_data.material_set_layout,
+            descriptor_pool,
+            &materials,
+            textures,
+            default_texture
+        )?;
+
+        debug!("descriptor points to buffer {:?}", skinning_buffer.buffer);
+        let skinning_descriptor_set = create_skinning_descriptor_set(
+            device,
+            descriptor_layout_data.skin_set_layout,
+            descriptor_pool,
+            skinning_buffer,
+        )?;
+
+		let instance_descriptor_set = create_instance_descriptor_set(
+			device,
+			descriptor_layout_data.instance_set_layout,
+			descriptor_pool,
+			instance_buffer
+		)?;
+
+        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets, skinning_descriptor_set, instance_descriptor_set })
     }
+
+    pub fn update_global_descriptor_set(
+        &mut self,
+        device: &Device,
+        uniform_buffers: &[vk::Buffer],
+    ) -> Result<()> {
+        for i in 0..self.global_descriptor_sets.len() {
+            let buffer_info = &[*vk::DescriptorBufferInfo::builder()
+                .buffer(uniform_buffers[i])
+                .offset(0)
+                .range(size_of::<UniformBufferObject>() as u64)];
+
+            let ubo_write = vk::WriteDescriptorSet::builder()
+                .dst_set(self.global_descriptor_sets[i])
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(buffer_info);
+
+            unsafe { device.update_descriptor_sets(&[ubo_write], &[] as &[vk::CopyDescriptorSet]); }
+        }   
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EntityInstance {
+    model_id:       ModelId,
+    model:          Mat4,
+    ssbo_offset:    u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct DrawItem {
+    material_set_id:    MaterialSetId,
+    model_id:           ModelId,
+    material_id:        Option<MaterialId>,
+    node_matrix:        Mat4,
+    first_index:        u32,
+    vertex_offset:      u32,
+    index_count:        u32,
+    instance_first:     u32,
+    instance_count:     u32,
 }
 
 #[derive(Clone, Debug)]
@@ -751,8 +1047,12 @@ pub struct CommandData {
     pub command_pool: vk::CommandPool,
     pub command_pools: Vec<vk::CommandPool>,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
+    pub secondary_command_buffers: Vec<vk::CommandBuffer>,
     pub setup_command_buffer: vk::CommandBuffer,
+
+    draw_list:			Vec<DrawItem>,
+    instance_data:		Vec<InstanceData>,
+    sorted_entities:	Vec<EntityInstance>,
 }
 
 impl CommandData {
@@ -778,7 +1078,11 @@ impl CommandData {
             command_pools,
             command_buffers,
             secondary_command_buffers,
-            setup_command_buffer
+            setup_command_buffer,
+
+            draw_list:			Vec::new(),
+            instance_data:		Vec::new(),
+			sorted_entities:	Vec::new(),
         })
     }
 
@@ -793,16 +1097,16 @@ impl CommandData {
     pub fn update_command_buffer(
         &mut self,
         device: &Device,
-        framebuffers: &[vk::Framebuffer],
-        indices: &[u32],
+        ecs_context: &mut ECSContext,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
-        descriptor_sets: &[vk::DescriptorSet],
-        swapchain_extent: vk::Extent2D,
-        render_pass: vk::RenderPass,
+        swapchain_data: &SwapchainData,
+        color_data: &ColorData,
+        depth_data: &DepthData,
+        descriptor_data: &DescriptorData,
+        msaa_samples: vk::SampleCountFlags,
         image_index: usize,
-        models: usize,
-        start_time: Instant,
+        frame_index: usize,
     ) -> Result<()> {
         // Pool
         let command_pool = self.command_pools[image_index];
@@ -815,10 +1119,6 @@ impl CommandData {
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         unsafe { device.begin_command_buffer(command_buffer, &info)? };
-
-        let render_area = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(swapchain_extent);
 
         let color_clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
@@ -833,129 +1133,348 @@ impl CommandData {
             },
         };
 
-        let clear_values = &[color_clear_value, depth_clear_value];
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(render_pass)
-            .framebuffer(framebuffers[image_index])
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(swapchain_data.swapchain_extent);
+
+        let color_attachment = vk::RenderingAttachmentInfo::builder()
+            .image_view(color_data.color_image_view)
+            .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(swapchain_data.swapchain_image_views[image_index])
+            .resolve_image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .clear_value(color_clear_value);
+
+        let depth_attachment = vk::RenderingAttachmentInfo::builder()
+            .image_view(depth_data.depth_image_view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(depth_clear_value);
+
+        let rendering_info = vk::RenderingInfo::builder()
+            .flags(vk::RenderingFlagsKHR::CONTENTS_SECONDARY_COMMAND_BUFFERS)
             .render_area(render_area)
-            .clear_values(clear_values);
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment))
+            .depth_attachment(&depth_attachment);
 
-        unsafe { device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS) };
+        Self::transition_for_render(
+            device,
+            swapchain_data.swapchain_images[image_index],
+            command_buffer
+        );
 
-        let secondary_command_buffers = (0..models)
-            .map(|i| self.update_secondary_command_buffers(
-                device,
-                framebuffers,
-                indices,
-                pipeline_data,
-                buffers_data,
-                descriptor_sets,
-                image_index,
-                i,
-                start_time,
-            ))
-            .collect::<Result<Vec<_>, _>>()?;
+        unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
+
+        let secondary_command_buffer = self.record_secondary_command_buffer(
+            device,
+            ecs_context,
+            pipeline_data,
+            buffers_data,
+            &[swapchain_data.swapchain_format],
+            depth_data,
+            descriptor_data,
+            msaa_samples,
+            image_index,
+            frame_index
+        )?;
 
         unsafe { 
-            device.cmd_execute_commands(command_buffer, &secondary_command_buffers[..]);
-            device.cmd_end_render_pass(command_buffer);
-            device.end_command_buffer(command_buffer)?;
+            device.cmd_execute_commands(command_buffer, &[secondary_command_buffer]);
+            device.cmd_end_rendering_khr(command_buffer);
         };
+
+        Self::transition_for_present(
+            device,
+            swapchain_data.swapchain_images[image_index],
+            command_buffer
+        );
+
+        unsafe { device.end_command_buffer(command_buffer)? };
 
         Ok(())
     }
-
-    pub fn update_secondary_command_buffers(
+    
+    /// record draws inside a unique secondary command buffer
+    fn record_secondary_command_buffer(
         &mut self,
         device: &Device,
-        framebuffers: &[vk::Framebuffer],
-        indices: &[u32],
+        ecs_context: &mut ECSContext,
         pipeline_data: &PipelineData,
         buffers_data: &BuffersData,
-        descriptor_sets: &[vk::DescriptorSet],
+        swapchain_formats: &[vk::Format],
+        depth_data: &DepthData,
+        descriptor_data: &DescriptorData,
+        msaa_samples: vk::SampleCountFlags,
         image_index: usize,
-        model_index: usize,
-        start_time: Instant,
+        frame_index: usize
     ) -> Result<vk::CommandBuffer> {
-        self.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
-        let command_buffers = &mut self.secondary_command_buffers[image_index];
+        // TODO: do a refactoring on the whole CommandData structure and functions
+		// TODO: instance_data, draw_list and sorted_entities should be define inside record_secondary_command_buffer not inside the struct CommandData
+        self.instance_data.clear();
+        self.draw_list.clear();
+		self.sorted_entities.clear();
 
-        while model_index >= command_buffers.len() {
-            let allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pools[image_index])
-                .level(vk::CommandBufferLevel::SECONDARY)
-                .command_buffer_count(1);
+		let models = ecs_context.world.get_resource::<ModelsStorage>()
+            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
 
-            let command_buffer = unsafe { device.allocate_command_buffers(&allocate_info)?[0] };
-            command_buffers.push(command_buffer);
-        }
+		// Step 1 - Draw Sorting
+		// 1.a - gather entities, sorted by model
+		self.sorted_entities.extend(
+			ecs_context.cached_renderable_query
+				.iter(&ecs_context.world)
+				.map(|(global, mesh_handle, skeleton)| {
+					let ssbo_offset = skeleton
+						.map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
+						.unwrap_or(PushConstants::NO_SKIN);
 
-        let command_buffer = command_buffers[model_index];
+					EntityInstance {
+						model_id: mesh_handle.model_id,
+						model: global.0,
+						ssbo_offset
+					}
+				})	
+		);
 
-        // push-constant model matrix
-        let y = (((model_index % 2) as f32) * 2.5) - 1.25;
-        let z = (((model_index / 2) as f32) * -2.0) + 1.0;
+		self.sorted_entities.sort_unstable_by_key(|e| e.model_id.0);
 
-        let time = start_time.elapsed().as_secs_f32(); // to make the model rotate
+		// 1.b - instance data + model ranges
+		let mut model_ranges: Vec<(ModelId, u32, u32)> = Vec::new();
 
-        let model = Mat4::from_translation(vec3(0.0, y, z)) 
-            * Mat4::from_axis_angle(vec3(0.0, 0.0 ,1.0), Deg(90.0) * time);
+		for entity in &self.sorted_entities {
+			match model_ranges.last_mut() {
+				Some((last_id, _, count)) if *last_id == entity.model_id => *count += 1,
+				_ => model_ranges.push((entity.model_id, self.instance_data.len() as u32, 1)),
+			}
 
-        let model_bytes = unsafe {
-            std::slice::from_raw_parts(
-                &model as *const Mat4 as *const u8,
-                size_of::<Mat4>()
-            )
-        };
+			self.instance_data.push(
+				InstanceData {
+					model: entity.model,
+					ssbo_offset: entity.ssbo_offset,
+					_padding: [0; 3],
+				}
+			)
+		}
 
-        let opacity = (model_index + 1) as f32 * 0.25;
-        let opacity_bytes = &opacity.to_ne_bytes()[..];
+		// 1.c - one DrawItem by (model, node, primitive)
+		for (model_id, instance_first, instance_count) in &model_ranges {
+			let model = models.get_model(*model_id);
+			let material_offset = models.get_material_offset(*model_id);
+
+			for (i, node) in model.graph.iter().enumerate() {
+				let Some(mesh) = &node.value.mesh else { continue };
+
+				let node_id = NodeId(i);
+				let node_matrix = model.get_global_matrix_of(node_id);
+				let mesh_offset = *buffers_data.mesh_offsets
+					.get(&(*model_id, node_id))
+					.unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", model_id, node_id));
+
+				for primitive in &mesh.primitives {
+					self.draw_list.push(DrawItem {
+						material_set_id: primitive.material_id
+							.map(|id| id.to_set_id(material_offset))
+							.unwrap_or(MaterialSetId(0)),
+						model_id: *model_id,
+						material_id: primitive.material_id, 
+						node_matrix,
+						first_index: mesh_offset.first_index + primitive.first_index,
+						vertex_offset: mesh_offset.vertex_offset,
+						index_count: primitive.index_count,
+						instance_first: *instance_first,
+						instance_count: *instance_count
+					});
+				}
+			}
+		}
+
+        self.draw_list.sort_unstable_by_key(|draw_item| draw_item.material_set_id);
+
+		// 1.d - Upload instance data
+		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
+			.ok_or_else(|| anyhow!("InstanceBuffer not found in world"))?;
+		instance_buffer.write(frame_index, &self.instance_data);
+
+        // Step 2 - Draw Binding with state tracking
+        let command_buffer = self.secondary_command_buffers[image_index];
+
+        let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
+            .color_attachment_formats(swapchain_formats)
+            .depth_attachment_format(depth_data.depth_format)
+            .rasterization_samples(msaa_samples);
 
         let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
-            .render_pass(pipeline_data.render_pass)
-            .subpass(0)
-            .framebuffer(framebuffers[image_index]);
+            .push_next(&mut inheritance_rendering_info);
 
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
             .inheritance_info(&inheritance_info);
+
 
         unsafe {
             device.begin_command_buffer(command_buffer, &info)?;
 
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_data.pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers_data.interleaved_buffer], &[0]);
-            device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.index_offset, vk::IndexType::UINT32);
-            
+            device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.interleaved_offset, vk::IndexType::UINT32);
+        
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_data.pipeline_layout,
                 0,
-                &[descriptor_sets[image_index]],
+                &[descriptor_data.global_descriptor_sets[image_index]],
                 &[]
             );
 
-            device.cmd_push_constants(
+			// skin binding
+            device.cmd_bind_descriptor_sets(
                 command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
                 pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                model_bytes
-            );
-            device.cmd_push_constants(
-                command_buffer,
-                pipeline_data.pipeline_layout,
-                vk::ShaderStageFlags::FRAGMENT,
-                64,
-                opacity_bytes,
+                2,
+                &[descriptor_data.skinning_descriptor_set],
+                &[]
             );
 
-            device.cmd_draw_indexed(command_buffer, indices.len() as u32, 1, 0, 0, 0);
-            device.end_command_buffer(command_buffer)?;
+			// entity binding
+			device.cmd_bind_descriptor_sets(
+				command_buffer,
+				vk::PipelineBindPoint::GRAPHICS,
+				pipeline_data.pipeline_layout,
+				3,
+				&[descriptor_data.instance_descriptor_set],
+				&[]
+			);
         }
 
+        let mut last_material: Option<MaterialSetId> = None;
+
+        for item in &self.draw_list {
+            // state tracking
+            if last_material != Some(item.material_set_id) {
+                last_material = Some(item.material_set_id);
+
+                unsafe {
+                    // materials binding
+                    device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_data.pipeline_layout,
+                        1,
+                        &[descriptor_data.material_descriptor_sets[item.material_set_id.0]],
+                        &[]
+                    );
+                }
+            }
+
+            let material = {
+                if let Some(material_id) = item.material_id {
+                    Some(models.get_model(item.model_id).get_material(material_id))
+                } else {
+                    None
+                }
+            };
+
+            let push_constant = PushConstants::new(item.node_matrix, material);
+
+            unsafe {
+                let push_bytes = std::slice::from_raw_parts(
+                    &push_constant as *const PushConstants as *const u8,
+                    size_of::<PushConstants>()
+                );
+                
+                let frag_offset = PushConstants::get_frag_offset();
+
+                device.cmd_push_constants(
+                    command_buffer,
+                    pipeline_data.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    &push_bytes[..frag_offset as usize]
+                );
+                device.cmd_push_constants(
+                    command_buffer,
+                    pipeline_data.pipeline_layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    frag_offset,
+                    &push_bytes[frag_offset as usize..],
+                );
+
+                device.cmd_draw_indexed(
+                    command_buffer,
+                    item.index_count,
+                    item.instance_count,
+                    item.first_index,
+                    item.vertex_offset as i32,
+                    item.instance_first
+                );
+            }
+        } 
+
+        unsafe { device.end_command_buffer(command_buffer)?; }
         Ok(command_buffer)
+    }
+
+    fn transition_for_render(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags2::empty())
+            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // TODO: if blending then need to access READ aswell.
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
+    }
+
+    fn transition_for_present(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::empty())
+            .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+        
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
     }
 }
 
@@ -997,57 +1516,11 @@ impl SyncData {
 }
 
 #[derive(Clone, Debug)]
-pub struct TextureData {
-    pub texture_image: vk::Image,
-	pub texture_image_memory: vk::DeviceMemory,
-	pub texture_image_view: vk::ImageView,
-    pub texture_sampler: vk::Sampler,
-    pub mip_levels: u32,
-}
-
-impl TextureData {
-    pub fn create(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        setup_command_buffer: vk::CommandBuffer,
-        graphics_queue: vk::Queue,
-        texture_path: &str,
-    ) -> Result<Self> {
-        let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
-            instance,
-            device,
-            physical_device,
-            texture_path,
-            setup_command_buffer,
-            graphics_queue
-        )?;
-		let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
-        let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
-
-        Ok(Self {
-            texture_image,
-            texture_image_memory,
-            texture_image_view,
-            texture_sampler,
-            mip_levels
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        device.destroy_sampler(self.texture_sampler, None);
-        device.destroy_image_view(self.texture_image_view, None);
-		device.destroy_image(self.texture_image, None);
-		device.free_memory(self.texture_image_memory, None);
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct DepthData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub depth_format: vk::Format,
 }
 
 impl DepthData {
@@ -1059,7 +1532,7 @@ impl DepthData {
         extent_height: u32,
         samples_count: vk::SampleCountFlags, 
     )-> Result<Self> {
-        let (depth_image, depth_image_memory, depth_image_view) = create_depth_objects(
+        let (depth_image, depth_image_memory, depth_image_view, depth_format) = create_depth_objects(
             &instance,
             &device,
             physical_device,
@@ -1071,7 +1544,8 @@ impl DepthData {
         Ok(Self {
             depth_image,
             depth_image_memory,
-            depth_image_view
+            depth_image_view,
+            depth_format
         })
     }
 

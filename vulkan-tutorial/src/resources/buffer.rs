@@ -6,7 +6,7 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::gpu::get_memory_type_index;
 use crate::render::UniformBufferObject;
-use crate::geometry::Vertex;
+use crate::scene::Vertex;
 
 use super::begin_setup_command_buffer;
 use super::flush_setup_command_buffer;
@@ -122,6 +122,7 @@ pub fn destroy_buffers(
 //===============================================
 
 /// Generate a framebuffer for the msaa sampling inside the swapchain.
+/// useless in dynamic rendering.
 pub fn create_framebuffers(
     device: &Device,
     render_pass: vk::RenderPass,
@@ -194,8 +195,8 @@ pub fn create_interleaved_buffer(
     )?;
 
     // Copy (staging)
-    let memory = unsafe { device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8 };
     unsafe {
+        let memory =  device.map_memory(staging_buffer_memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8;
         memcpy(vertices.as_ptr() as *const u8, memory, vertex_size as usize);
         memcpy(indices.as_ptr() as *const u8, memory.add(vertex_size as usize), index_size as usize);
         device.unmap_memory(staging_buffer_memory);
@@ -280,14 +281,14 @@ pub fn create_uniform_buffers(
 
 /// Re-create a list of uniform buffers and their memories
 /// 
-/// # Arguments
+/// ## Arguments
 /// 
-/// - `instance` (`&Instance`) - Vulkan instance.
-/// - `device` (`&Device`) - Vulkan device.
-/// - `physical_device` (`vk`) - a physical device.
-/// - `uniform_buffers` (`&mut Vec<vk`) - the uniform buffers to recreates.
-/// - `uniform_buffers_memory` (`&mut Vec<vk`) - the uniform buffers memories associated.
-/// - `count` (`usize`) - the number of buffers to recreate.
+/// - `instance` ( &[Instance] ) - Vulkan instance.
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `physical_device` ( [vk::PhysicalDevice] ) - a physical device.
+/// - `uniform_buffers` ( &mut Vec<[vk::Buffer]> ) - the uniform buffers to recreates.
+/// - `uniform_buffers_memory` ( &mut Vec<[vk::DeviceMemory]> ) - the uniform buffers memories associated.
+/// - `count` (  usize ) - the number of buffers to recreate.
 pub fn recreate_uniform_buffers(
     instance: &Instance,
     device: &Device,

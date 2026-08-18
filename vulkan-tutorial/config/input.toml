@@ -1,0 +1,7 @@
+[camera_control]
+forward = "w"
+backward = "s"
+left = "a"
+right = "d"
+up = "space"
+down = "ctrl_left"

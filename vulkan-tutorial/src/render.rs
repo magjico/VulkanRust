@@ -13,8 +13,12 @@ pub use texture::create_texture_image;
 pub use texture::create_texture_sampler;
 pub use texture::create_texture_image_view;
 pub use texture::generate_mipmaps;
+pub use texture::TextureData;
+pub use texture::TexturesStorage;
 
 pub use uniform::UniformBufferObject;
+pub use uniform::PushConstants;
+pub use uniform::InstanceData;
 
 pub use swapchain::create_swapchain;
 pub use swapchain::create_swapchain_image_views;

@@ -1,9 +1,19 @@
-/// Setup multiple **specific** app objects
+//! Setup multiple **specific** app objects
+use anyhow::anyhow;
+use cgmath::One;
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
+use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::IntoScheduleConfigs;
 
-use crate::render::UniformBufferObject;
+use crate::assets::load_model_with_offset;
+use crate::ops::SlotAllocator;
+use crate::math::*;
+use crate::render::*;
+use crate::scene::*;
+use crate::constants::*;
+use crate::type_safety::*;
 
 //===============================================
 // Descriptors
@@ -16,13 +26,15 @@ use crate::render::UniformBufferObject;
 /// 
 /// - `device` ( &[Device] ) - The Vulkan device.
 /// - `swapchain_images_count` (`u32`) - number of swapchain images (we will generate a descriptor set by image).
+/// - `materials_count` (`u32`)
 /// 
 /// ## Returns
 /// 
 /// - `Result<vk::DescriptorPool>`.
 pub fn create_descriptor_pool(
     device: &Device,
-    swapchain_images_count: u32
+    swapchain_images_count: u32,
+    materials_count: u32,
 ) -> Result<vk::DescriptorPool> {
     let ubo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
@@ -30,12 +42,20 @@ pub fn create_descriptor_pool(
 
     let sampler_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(swapchain_images_count);
+        .descriptor_count(materials_count * 5);
 
-    let pool_sizes = &[ubo_size, sampler_size];
+    let ssbo_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(
+            1							// Skin SSBOs size      -> a unique global set
+            + 1                         // Instance SSBOs size  -> a unique global set
+            + swapchain_images_count 	// Light SSBO size      -> 1 for each swapchain image
+        );
+
+    let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count);
+        .max_sets(swapchain_images_count + materials_count + 1 + 1);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -43,33 +63,28 @@ pub fn create_descriptor_pool(
 }
 
 /// Generate multiple descriptor set for each swapchain image.
-/// With those the shaders will have access to the UBO and texture sampling.
-/// 
-/// note: you can only use this function after generating the descriptor pool for it.
+/// With those the shaders will have access to the UBO.
 /// 
 /// ## Arguments
 /// 
 /// - `device` ( &[Device] ) - The Vulkan device.
-/// - `swapchain_images_count` (`usize`) - number of swapchain images.
-/// - `descriptor_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_descriptor_set_layout].
-/// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
-/// - `uniform_buffers` (`&[vk::Buffer]`).
-/// - `texture_image_view` ( [vk::ImageView] ).
-/// - `texture_sampler` ( [vk::Sampler] ) - texture sampler.
+/// - `swapchain_images_count` ( `usize` ) - number of swapchain images.
+/// - `global_set_layout` ( [`vk::DescriptorSetLayout`] ) - see [create_global_set_layout].
+/// - `descriptor_pool` ( [`vk::DescriptorPool`] ) - see [create_descriptor_pool].
+/// - `uniform_buffers` ( &[[vk::Buffer]] ).
 /// 
 /// ## Returns
 /// 
 /// - `Result<Vec<vk::DescriptorSet>>`.
-pub fn create_descriptor_sets(
+pub fn create_global_descriptor_sets(
     device: &Device,
     swapchain_images_count: usize,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    global_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     uniform_buffers: &[vk::Buffer],
-    texture_image_view: vk::ImageView,
-    texture_sampler: vk::Sampler,
+    light_buffer: &LightBuffer,
 ) -> Result<Vec<vk::DescriptorSet>> {
-    let layouts = vec![descriptor_set_layout; swapchain_images_count];
+    let layouts = vec![global_set_layout; swapchain_images_count];
 
     let info = vk::DescriptorSetAllocateInfo::builder()
         .descriptor_pool(descriptor_pool)
@@ -79,36 +94,176 @@ pub fn create_descriptor_sets(
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
 
     for i in 0..swapchain_images_count {
-        let info = vk::DescriptorBufferInfo::builder()
+        let ubo_info = &[*vk::DescriptorBufferInfo::builder()
             .buffer(uniform_buffers[i])
             .offset(0)
-            .range(size_of::<UniformBufferObject>() as u64);
-
-        let buffer_info = &[info];
+            .range(size_of::<UniformBufferObject>() as u64)];
         let ubo_write = vk::WriteDescriptorSet::builder()
             .dst_set(descriptor_sets[i])
             .dst_binding(0)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(buffer_info);
+            .buffer_info(ubo_info);
 
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(texture_image_view)
-            .sampler(texture_sampler);
-
-        let image_info = &[info];
-        let sampler_write = vk::WriteDescriptorSet::builder()
+        let light_info = &[*vk::DescriptorBufferInfo::builder()
+            .buffer(light_buffer.buffer)
+            .offset(0)
+            .range((light_buffer.max_lights * size_of::<Light>()) as u64)];
+        let light_write = vk::WriteDescriptorSet::builder()
             .dst_set(descriptor_sets[i])
             .dst_binding(1)
             .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(image_info);
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(light_info);
 
-        unsafe { device.update_descriptor_sets(&[ubo_write, sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+        unsafe { device.update_descriptor_sets(&[ubo_write, light_write], &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)
+}
+
+
+/// Generate multiple descriptor set for each swapchain image.
+/// With those the shaders will have access to the textures.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `material_set_layout` ([`vk::DescriptorSetLayout`]) - see [create_material_set_layout].
+/// - `descriptor_pool` ([`vk::DescriptorPool`]) - see [create_descriptor_pool].
+/// - materials (&\[[Material]]),
+/// - textures (&[TexturesStorage]),
+/// - default_texture (&[TextureData]),
+/// 
+/// ## Returns
+/// 
+/// - `Result<Vec<vk::DescriptorSet>>`.
+pub fn create_material_descriptor_sets(
+    device: &Device,
+    material_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    materials: &[&Material],
+    textures: &TexturesStorage,
+    default_texture: &TextureData,
+) -> Result<Vec<vk::DescriptorSet>> {
+    let layouts = vec![material_set_layout; materials.len()];
+
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(&layouts);
+
+    // to return
+    let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
+
+    // helper function to get texture or the default one
+    let get_texture = |id: Option<TextureId>| -> &TextureData {
+        if let Some(id) = id {
+            textures.get_texture(id)
+        } else {
+            default_texture
+        }
+    };
+
+    for (i, material) in materials.iter().enumerate() {
+        let image_infos: Vec<vk::DescriptorImageInfo> = vec![
+            material.base_color_texture_idx,
+            material.metallic_roughness_texture_idx,
+            material.normal_texture_idx,
+            material.occlusion_texture_idx,
+            material.emissive_texture_idx,
+        ].iter().map(|&idx| {
+            let tex = get_texture(idx);
+            *vk::DescriptorImageInfo::builder()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(tex.image_view)
+                .sampler(tex.sampler)
+        }).collect();
+
+        let sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos);
+
+        unsafe { device.update_descriptor_sets(&[sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+    }
+
+    Ok(descriptor_sets)
+}
+
+/// Generate a unique descriptor set for each skins.
+/// 
+/// ## Arguments
+/// 
+/// - `device` ( &[Device] ) - Vulkan device.
+/// - `skin_set_layout` ( [vk::DescriptorSetLayout] ) - the skinning descriptor set layout.
+/// - `descriptor_pool` ( [vk::DescriptorPool] ) - the skinning descriptor pool.
+/// - `skinning_buffer` ( [vk::Buffer] ) - the skinning buffer containing all joints matrices.
+pub fn create_skinning_descriptor_set(
+    device: &Device,
+    skinning_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    skinning_buffer: &SkinningBuffer,
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[skinning_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let buffer_info = &[
+        *vk::DescriptorBufferInfo::builder()
+            .buffer(skinning_buffer.buffer)
+            .offset(0)
+            .range(SkinningBuffer::get_range())
+    ];
+
+    // debug!("buffer size = {}, descriptor range = {}", size, SkinningBuffer::get_range());
+
+    let ssbo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .dst_array_element(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(buffer_info);
+
+    unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
+
+    Ok(descriptor_set)
+}   
+
+pub fn create_instance_descriptor_set(
+    device: &Device,
+    instance_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    instance_buffer: &InstanceBuffer
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[instance_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let buffer_info = &[
+        *vk::DescriptorBufferInfo::builder()
+            .buffer(instance_buffer.buffer)
+            .offset(0)
+            .range(InstanceBuffer::get_range())
+    ];
+
+    let ssbo_write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .dst_array_element(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .buffer_info(buffer_info);
+
+    unsafe { device.update_descriptor_sets(&[ssbo_write], &[] as &[vk::CopyDescriptorSet]) };
+    
+    Ok(descriptor_set)
 }
 
 //===============================================
@@ -162,4 +317,217 @@ pub fn create_sync_objects(
         in_flight_fences,
         images_in_flight
     ))
+}
+
+//===============================================
+// Bevy ECS World
+//===============================================
+
+pub fn init_ecs_context(
+    device: &Device,
+	instance: &Instance,
+	physical_device: vk::PhysicalDevice,
+) -> Result<ECSContext> {
+    let mut ecs_context = ECSContext::init();
+    let skinning_buff = SkinningBuffer::create(instance, device, physical_device)?;
+    let instance_buff = InstanceBuffer::create(instance, device, physical_device)?;
+
+    // world
+    ecs_context.world.insert_resource(VulkanDevice(device.clone()));
+    ecs_context.world.insert_resource(skinning_buff);
+    ecs_context.world.insert_resource(instance_buff);
+	ecs_context.world.insert_resource(SSBOSkiningAllocator(SlotAllocator::new(MAX_INSTANCES, MAX_JOINT_PER_INSTANCE)));
+	ecs_context.world.insert_resource(Time::default());
+    ecs_context.world.insert_resource(CurrentFrame::default());
+
+    // schedule
+    ecs_context.schedule.add_systems(
+        (
+            propagate_transforms_from_root,
+            propagate_transforms_to_children,
+            update_skeletons_wrapped
+        ).chain()
+    );
+
+    Ok(ecs_context)
+}
+
+//===============================================
+// models
+//===============================================
+
+/// load gltf models
+pub fn load_gltf_models(
+	device: &Device,
+	instance: &Instance,
+	physical_device: vk::PhysicalDevice,
+	setup_command_buffer: vk::CommandBuffer,
+	graphics_queue: vk::Queue,
+	models: &mut ModelsStorage,
+    textures: &mut TexturesStorage,
+    model_registry: &mut ModelRegistry,
+) -> Result<()> {
+    for (model_path, model_key) in MODEL_INFO.iter() {
+        load_model_with_offset(
+            device,
+            instance,
+            physical_device,
+            *model_path,
+            *model_key,
+            setup_command_buffer,
+            graphics_queue,
+            models,
+            textures,
+            model_registry
+        )?;
+    }
+
+	Ok(())
+}
+
+
+/// spawn 4 models with the bevy ecs systems
+pub fn spawn_from_cesium_man_instances(
+	world: &mut World,
+    model_registry: &ModelRegistry
+) -> Result<Vec<Entity>> {
+    let cesium_assets = model_registry.entries.get(CESIUM_MAN_KEY)
+        .ok_or_else(|| anyhow!("key <{}> not found in registry", CESIUM_MAN_KEY))?;
+
+    let positions = [
+		Vec3::new(-2.0, -2.0, 0.0),
+		Vec3::new(-2.0, 2.0, 0.0),
+		Vec3::new(2.0, -2.0, 0.0),
+		Vec3::new(2.0, 2.0, 0.0),
+	];
+
+	let entities = positions.iter().enumerate()
+		.map(|(i, &pos)| {
+			let transform =  Transform::new(
+				pos,
+				Quat::one(),
+				Vec3::new(1.0, 1.0, 1.0)
+			);
+
+            let anim_time =  0.5 * i as f32;
+
+			ModelSpawnBuilder::new(cesium_assets.model_id)
+				.with_animation(AnimationSpec::Animated { skin_id: SkinId(0), anim_id: AnimationId(0) })
+                .animation_start_at(anim_time)
+				.spawn_at(world, transform)
+		})
+		.collect::<Result<Vec<_>>>()?;
+
+	Ok(entities)
+}
+
+pub fn spawn_from_brain_stem_instance(
+    world: &mut World,
+    model_registry: &ModelRegistry
+) -> Result<Vec<Entity>> {
+    let assets = model_registry.entries.get(BRAIN_STEM_KEY)
+        .ok_or_else(|| anyhow!("key <{}> not found in registry", BRAIN_STEM_KEY))?;
+
+    let positions = [
+        Vec3::new(0.0, 0.0, 0.0)
+    ];
+
+    let entities = positions.iter()
+        .map(|&pos| {
+            let transform = Transform::new(
+                pos,
+                Quat::one(),
+                Vec3::new(1.0, 1.0, 1.0)
+            );
+
+            ModelSpawnBuilder::new(assets.model_id)
+                .with_animation(AnimationSpec::Animated { skin_id: SkinId(0), anim_id: AnimationId(0) })
+                .spawn_at(world, transform)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(entities)
+}
+
+
+//===============================================
+// defaults
+//===============================================
+
+pub fn create_default_texture(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice,
+    setup_command_buffer: vk::CommandBuffer,
+    graphics_queue: vk::Queue,
+) -> Result<TextureData> {
+    // White Pixel 1x1 RGBA
+    let pixels = [255u8, 255, 255, 255];
+
+    let extent = vk::Extent3D {
+        width: 1,
+        height: 1,
+        depth: 1,
+    };
+
+    let mip_levels = 1;
+
+    let (image, image_memory) = create_texture_image(
+        instance,
+        device,
+        physical_device,
+        setup_command_buffer,
+        graphics_queue,
+        extent,
+        mip_levels,
+        &pixels,
+        vk::Format::R8G8B8A8_SRGB,
+    )?;
+
+    let image_view = create_texture_image_view(device, image, mip_levels)?;
+    let sampler = create_texture_sampler(device, mip_levels as f32)?;
+
+    Ok(TextureData {
+        image,
+        image_memory,
+        image_view,
+        sampler,
+        mip_levels,
+    })
+}
+
+pub fn create_default_lightning(
+    instance: &Instance,
+    device: &Device,
+    physical_device: vk::PhysicalDevice
+) -> Result<LightBuffer> {
+    let mut light_buffer = LightBuffer::create(
+        instance,
+        device,
+        physical_device,
+        4
+    )?;
+
+    light_buffer.lights = vec![
+        Light {
+            position: Vec4::new(-10.0, 10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(10.0, 10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(-10.0, -10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+        Light {
+            position: Vec4::new(10.0, -10.0, 10.0, 1.0),
+            color:    Vec4::new(1.0, 0.0, 0.0, 15.0),
+        },
+    ];
+
+    light_buffer.update(device)?;
+
+    Ok(light_buffer)
 }

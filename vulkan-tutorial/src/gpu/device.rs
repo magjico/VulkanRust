@@ -5,7 +5,7 @@ use log::*;
 use anyhow::{Result, anyhow};
 
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
+use vulkanalia::vk::{InstanceV1_1, KhrSurfaceExtensionInstanceCommands};
 
 use crate::constants::PORTABILITY_MACOS_VERSION;
 
@@ -31,7 +31,6 @@ fn is_physical_device_supported(
     mandatory_features: &vk::PhysicalDeviceFeatures,
     mandatory_device_extensions: &[vk::ExtensionName],
 ) -> bool {
-    
     let feat_mem_len  = std::mem::size_of::<vk::PhysicalDeviceFeatures>()
         / std::mem::size_of::<vk::Bool32>();
 
@@ -171,11 +170,24 @@ pub fn get_physical_devices(
     let mut scored_physical_devices: Vec<(vk::PhysicalDevice, u32)> = Vec::new();
 
     let physical_devices = unsafe { instance.enumerate_physical_devices()? };
+    
     for physical_device in physical_devices {
+        // sync features
+        let mut sync_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::builder();
+        let mut mandatory_features_2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut sync_features);
+
         // 1 - physical device definition
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
         let mem_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
         let feats = unsafe { instance.get_physical_device_features(physical_device) };
+        unsafe { instance.get_physical_device_features2(physical_device, &mut mandatory_features_2) };
+
+        info!("sync2 supported: {}", sync_features.synchronization2);
+        if sync_features.synchronization2 != vk::TRUE {
+            continue;
+        }
+
         let extensions = unsafe { instance
             .enumerate_device_extension_properties(physical_device, None)?
             .iter()
@@ -364,18 +376,54 @@ pub fn create_logical_device(
         extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
     }
 
+    info!("device extensions: {:?}", device_extensions);
+
     // Features
     let features = vk::PhysicalDeviceFeatures::builder()
         .sampler_anisotropy(true)
 		// Enable sample shading features
 		.sample_rate_shading(true);
 
+    let supports_dynamic_rendering;
+    let supports_sync2;
+
+    {
+        let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::builder();
+        let mut sync_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::builder();
+
+        let mut features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut sync_features)
+            .push_next(&mut dynamic_rendering_features);
+
+        unsafe { instance.get_physical_device_features2(physical_device, &mut features2) };
+
+        supports_dynamic_rendering = dynamic_rendering_features.dynamic_rendering;
+        supports_sync2 = sync_features.synchronization2;
+    }
+
+    if supports_dynamic_rendering == vk::FALSE {
+        return Err(anyhow!("dynamic rendering not supported"));
+    }
+    if supports_sync2 == vk::FALSE {
+        return Err(anyhow!("synchronization2 not supported"));
+    }
+
+    let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::builder()
+        .dynamic_rendering(true);
+    let mut sync_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
+        .synchronization2(true);
+
     // Create
+    let mut features2 = vk::PhysicalDeviceFeatures2::builder()
+        .features(features.build())
+        .push_next(&mut sync_features)
+        .push_next(&mut dynamic_rendering_features);
+
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
-        .enabled_features(&features);
+        .push_next(&mut features2);
 
     let device = unsafe { instance.create_device(physical_device, &info, None)? };
 

@@ -3,31 +3,91 @@ use anyhow::Result;
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
 
-use crate::geometry::Vertex;
+use crate::scene::Vertex;
+use crate::render::PushConstants;
 
 //===========================================
 // Descriptor Set
 //===========================================
 
-pub fn create_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+/// create **UBO** descriptor set layout.
+/// 
+/// **change every frame**
+pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    // Base-color binding
     let ubo_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::VERTEX);
+        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
 
-    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
+    // Light binding
+    let light_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(1)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding, sampler_binding];
+    let bindings = &[ubo_binding, light_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
 
+    Ok(descriptor_set_layout)
+}
+
+/// create a unique descriptor set layout for **all skins**.
+pub fn create_skinning_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    // Animation joint binding
+    let binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+
+    Ok(descriptor_set_layout)
+}
+
+/// create material set layout in this order:
+/// base color, metallic-roughness, normal map, occlusion map, emissive map.
+/// 
+/// **change by mesh**
+pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let bindings: Vec<vk::DescriptorSetLayoutBinding>  = (0..5u32)
+        .map(|i| *vk::DescriptorSetLayoutBinding::builder()
+            .binding(i)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        ).collect();
+    
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(&bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+}
+
+/// create a unique descriptor set layout for all model instances
+pub fn create_instance_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+
+    let bindings = &[binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
     Ok(descriptor_set_layout)
 }
 
@@ -47,10 +107,14 @@ pub fn create_pipeline(
     device: &Device,
     vert: &[u8],
     frag: &[u8],
-    render_pass: vk::RenderPass,
     swapchain_extent: vk::Extent2D,
+    swapchain_format: vk::Format,
+    depth_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    global_set_layout: vk::DescriptorSetLayout,
+    material_set_layout: vk::DescriptorSetLayout,
+    skin_set_layout: vk::DescriptorSetLayout,
+    instance_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     // Stages
     let vert_shader_module = create_shader_module(device, &vert[..])?;
@@ -141,24 +205,34 @@ pub fn create_pipeline(
         .blend_constants([0.0, 0.0, 0.0, 0.0]);
 
     // Constant Push
+    let frag_offset = PushConstants::get_frag_offset();
+    let frag_size = PushConstants::get_frag_size();
+
     let vert_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::VERTEX)
         .offset(0)
-        .size(64 /* 16 x 4 byte float */);
+        .size(frag_offset);
 
     let frag_push_constant_range = vk::PushConstantRange::builder()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .offset(64)
-        .size(4);
+        .offset(frag_offset)
+        .size(frag_size);
 
     // Layout
-    let set_layouts = &[descriptor_set_layout];
+    let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout, instance_set_layout];
     let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
         .push_constant_ranges(push_constant_ranges)
         .set_layouts(set_layouts);
 
     let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
+
+    // dynamic rendering
+    let color_formats = &[swapchain_format];
+
+    let mut pipeline_rendering_info = vk::PipelineRenderingCreateInfoKHR::builder()
+        .color_attachment_formats(color_formats)
+        .depth_attachment_format(depth_format);
 
     // Create
     let stages = &[vert_stage, frag_stage];
@@ -172,8 +246,7 @@ pub fn create_pipeline(
         .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         .layout(pipeline_layout)
-        .render_pass(render_pass)
-        .subpass(0);
+        .push_next(&mut pipeline_rendering_info);
 
     let pipeline = unsafe { device
         .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
