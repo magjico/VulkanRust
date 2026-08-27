@@ -290,15 +290,14 @@ impl App {
         // 8. pipeline
         let descriptor_layout_data = DescriptorLayoutData::create(&device)?;
 
-        let pipeline_data = PipelineData::create(
+        let pipeline_data = Pipeline::new(
             &device,
-            swapchain_data.swapchain_format,
+            &[(&[VERT, FRAG], &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT])],
             swapchain_data.swapchain_extent,
+            swapchain_data.swapchain_format,
             depth_data.depth_format,
-            &descriptor_layout_data,
             msaa_samples,
-            VERT,
-            FRAG
+            &descriptor_layout_data,
         )?;
         
 		// 8 - 9. load .glb models and textures
@@ -778,50 +777,6 @@ impl SwapchainData {
     pub unsafe fn destroy(&self, device: &Device) {
         self.swapchain_image_views.iter().for_each(|v| device.destroy_image_view(*v, None));
         device.destroy_swapchain_khr(self.swapchain, None);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PipelineData {
-    pub pipeline_layout: vk::PipelineLayout,
-    pub pipeline: vk::Pipeline,
-}
-
-impl PipelineData {
-    pub fn create(
-        device: &Device,
-        swapchain_format: vk::Format,
-        swapchain_extent: vk::Extent2D,
-        depth_format: vk::Format,
-        descriptor_layout_data: &DescriptorLayoutData,
-        msaa_samples: vk::SampleCountFlags,
-        vert: &[u8],
-        frag: &[u8],
-    ) -> Result<Self> {
-        let (pipeline, pipeline_layout) = create_pipeline(
-            &device,
-            vert,
-            frag,
-            swapchain_extent,
-            swapchain_format,
-            depth_format,
-            msaa_samples,
-            descriptor_layout_data.global_set_layout,
-            descriptor_layout_data.material_set_layout,
-			descriptor_layout_data.skin_set_layout,
-            descriptor_layout_data.instance_set_layout,
-        )?;
-
-        Ok(Self {
-            pipeline_layout,
-            pipeline
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_pipeline(self.pipeline, None);
-        device.destroy_pipeline_layout(self.pipeline_layout, None);
     }
 }
 
