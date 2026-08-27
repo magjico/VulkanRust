@@ -17,8 +17,8 @@ pub use shader::create_global_descriptor_set_layout;
 pub use shader::create_material_descriptor_set_layout;
 pub use shader::create_skinning_descriptor_set_layout;
 pub use shader::create_instance_descriptor_set_layout;
-pub use shader::create_pipeline;
+pub use shader::ShaderStagesBuilder;
 
-pub use pipeline::create_render_pass;
+pub use pipeline::Pipeline;
 
 pub use instance::create_instance;
