@@ -24,7 +24,7 @@ use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
 use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
-use crate::render::{Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, create_color_objects, create_depth_objects};
+use crate::render::{Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, ColorAttachment, DepthAttachment};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
@@ -249,7 +249,7 @@ impl App {
         )?;
 
         // 6. color
-        let color_data = ColorData::create(
+        let color_data = ColorAttachment::new(
             &instance,
             &device,
             device_data.physical_device,
@@ -260,7 +260,7 @@ impl App {
         )?;
 
         // 7. depth
-        let depth_data = DepthData::create(
+        let depth_data = DepthAttachment::new(
             &instance,
             &device,
             device_data.physical_device,
@@ -280,7 +280,7 @@ impl App {
             ],
             swapchain_data.vk_extent,
             swapchain_data.vk_format,
-            depth_data.depth_format,
+            depth_data.vk_format,
             device_data.max_msaa_samples,
             &[
                 descriptor_layout_data.global_set_layout,
@@ -473,7 +473,7 @@ impl App {
             &mut self.data.device_data.queue_family_indices,
         )?;
 
-        self.data.color_data = ColorData::create(
+        self.data.color_data = ColorAttachment::new(
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
@@ -483,7 +483,7 @@ impl App {
             self.data.swapchain_data.vk_format,
         )?;
 
-        self.data.depth_data = DepthData::create(
+        self.data.depth_data = DepthAttachment::new(
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
@@ -500,7 +500,7 @@ impl App {
             ],
             self.data.swapchain_data.vk_extent,
             self.data.swapchain_data.vk_format,
-            self.data.depth_data.depth_format,
+            self.data.depth_data.vk_format,
             self.data.device_data.max_msaa_samples,
             &[
                 self.data.descriptor_layout_data.global_set_layout,
@@ -685,9 +685,9 @@ pub struct AppData {
     // Sync Objects
     pub sync_data: SyncData,
     // Depth
-    pub depth_data: DepthData,
+    pub depth_data: DepthAttachment,
 	// Render target (now only use for MSAA)
-	pub color_data: ColorData,
+	pub color_data: ColorAttachment,
     // Camera
     pub camera_data: Camera,
     // Lights
@@ -975,8 +975,8 @@ impl CommandData {
         pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
         swapchain_data: &Swapchain,
-        color_data: &ColorData,
-        depth_data: &DepthData,
+        color_data: &ColorAttachment,
+        depth_data: &DepthAttachment,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
@@ -1012,7 +1012,7 @@ impl CommandData {
             .extent(swapchain_data.vk_extent);
 
         let color_attachment = vk::RenderingAttachmentInfo::builder()
-            .image_view(color_data.color_image_view)
+            .image_view(color_data.0.vk_image_view)
             .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -1022,7 +1022,7 @@ impl CommandData {
             .clear_value(color_clear_value);
 
         let depth_attachment = vk::RenderingAttachmentInfo::builder()
-            .image_view(depth_data.depth_image_view)
+            .image_view(depth_data.attachment.vk_image_view)
             .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -1080,7 +1080,7 @@ impl CommandData {
         pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
         vk_formats: &[vk::Format],
-        depth_data: &DepthData,
+        depth_data: &DepthAttachment,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
@@ -1177,7 +1177,7 @@ impl CommandData {
 
         let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
             .color_attachment_formats(vk_formats)
-            .depth_attachment_format(depth_data.depth_format)
+            .depth_attachment_format(depth_data.vk_format)
             .rasterization_samples(msaa_samples);
 
         let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
@@ -1386,89 +1386,5 @@ impl SyncData {
         self.in_flight_fences.iter().for_each(|f| device.destroy_fence(*f, None)); // also free images_in_flight
         self.render_finished_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
         self.image_available_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct DepthData {
-    pub depth_image: vk::Image,
-    pub depth_image_memory: vk::DeviceMemory,
-    pub depth_image_view: vk::ImageView,
-    pub depth_format: vk::Format,
-}
-
-impl DepthData {
-    pub fn create(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        extent_width: u32,
-        extent_height: u32,
-        samples_count: vk::SampleCountFlags, 
-    )-> Result<Self> {
-        let (depth_image, depth_image_memory, depth_image_view, depth_format) = create_depth_objects(
-            &instance,
-            &device,
-            physical_device,
-            extent_width,
-            extent_height,
-            samples_count
-        )?;
-
-        Ok(Self {
-            depth_image,
-            depth_image_memory,
-            depth_image_view,
-            depth_format
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_image_view(self.depth_image_view, None);
-        device.free_memory(self.depth_image_memory, None);
-        device.destroy_image(self.depth_image, None);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ColorData {
-    pub color_image: vk::Image,
-	pub color_image_memory: vk::DeviceMemory,
-	pub color_image_view: vk::ImageView,
-}
-
-impl ColorData {
-    pub fn create(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        extent_width: u32,
-        extent_height: u32,
-        samples_count: vk::SampleCountFlags,
-        vk_format: vk::Format,  
-    ) -> Result<Self> {
-        let (color_image, color_image_memory, color_image_view) = create_color_objects(
-            instance,
-            device,
-            physical_device,
-            extent_width,
-            extent_height,
-            samples_count,
-            vk_format,
-        )?;
-
-        Ok(Self {
-            color_image,
-            color_image_memory,
-            color_image_view
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_image_view(self.color_image_view, None);
-        device.free_memory(self.color_image_memory, None);
-        device.destroy_image(self.color_image, None);
     }
 }
