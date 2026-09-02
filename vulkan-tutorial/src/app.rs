@@ -24,7 +24,7 @@ use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
 use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
-use crate::render::{InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, create_color_objects, create_depth_objects, create_swapchain, create_swapchain_image_views};
+use crate::render::{Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, create_color_objects, create_depth_objects};
 use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
@@ -232,7 +232,7 @@ impl App {
         let mut ecs_context = init_ecs_context(&device, &instance, device_data.physical_device)?;
 
         // 4. swapchain
-        let swapchain_data = SwapchainData::create(
+        let swapchain_data = Swapchain::new(
             window,
             &instance,
             &device,
@@ -245,7 +245,7 @@ impl App {
         let command_data = CommandData::create(
             &device,
             &mut device_data.queue_family_indices,
-            &swapchain_data.swapchain_images
+            &swapchain_data.vk_images
         )?;
 
         // 6. color
@@ -253,10 +253,10 @@ impl App {
             &instance,
             &device,
             device_data.physical_device,
-            swapchain_data.swapchain_extent.width,
-            swapchain_data.swapchain_extent.height,
+            swapchain_data.vk_extent.width,
+            swapchain_data.vk_extent.height,
             device_data.max_msaa_samples,
-            swapchain_data.swapchain_format
+            swapchain_data.vk_format
         )?;
 
         // 7. depth
@@ -264,8 +264,8 @@ impl App {
             &instance,
             &device,
             device_data.physical_device,
-            swapchain_data.swapchain_extent.width,
-            swapchain_data.swapchain_extent.height,
+            swapchain_data.vk_extent.width,
+            swapchain_data.vk_extent.height,
             device_data.max_msaa_samples,
         )?;
 
@@ -278,8 +278,8 @@ impl App {
                 (VERT, vk::ShaderStageFlags::VERTEX),
                 (FRAG, vk::ShaderStageFlags::FRAGMENT)
             ],
-            swapchain_data.swapchain_extent,
-            swapchain_data.swapchain_format,
+            swapchain_data.vk_extent,
+            swapchain_data.vk_format,
             depth_data.depth_format,
             device_data.max_msaa_samples,
             &[
@@ -322,7 +322,7 @@ impl App {
             &models,
             command_data.setup_command_buffer,
             device_data.graphics_queue,
-            swapchain_data.swapchain_images.len(),
+            swapchain_data.vk_images.len(),
         )?;
 
 		// 11. lights
@@ -339,7 +339,7 @@ impl App {
             &default_texture,
             &models,
             &lights,
-            swapchain_data.swapchain_images.len(),
+            swapchain_data.vk_images.len(),
         )?;
         
 		// 13. ECS - final init + instance spawn
@@ -352,7 +352,7 @@ impl App {
         let sync_data = SyncData::create(
             &device,
             MAX_FRAMES_IN_FLIGHT,
-            swapchain_data.swapchain_images.len(),
+            swapchain_data.vk_images.len(),
         )?;
 
         // 15. Camera
@@ -464,7 +464,7 @@ impl App {
             self.destroy_swapchain();
         };
 
-        self.data.swapchain_data = SwapchainData::create(
+        self.data.swapchain_data = Swapchain::new(
             window,
             &self.instance,
             &self.device,
@@ -477,18 +477,18 @@ impl App {
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
-            self.data.swapchain_data.swapchain_extent.width,
-            self.data.swapchain_data.swapchain_extent.height,
+            self.data.swapchain_data.vk_extent.width,
+            self.data.swapchain_data.vk_extent.height,
             self.data.device_data.max_msaa_samples,
-            self.data.swapchain_data.swapchain_format,
+            self.data.swapchain_data.vk_format,
         )?;
 
         self.data.depth_data = DepthData::create(
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
-            self.data.swapchain_data.swapchain_extent.width,
-            self.data.swapchain_data.swapchain_extent.height,
+            self.data.swapchain_data.vk_extent.width,
+            self.data.swapchain_data.vk_extent.height,
             self.data.device_data.max_msaa_samples,
         )?;
 
@@ -498,8 +498,8 @@ impl App {
                 (VERT, vk::ShaderStageFlags::VERTEX),
                 (FRAG, vk::ShaderStageFlags::FRAGMENT)
             ],
-            self.data.swapchain_data.swapchain_extent,
-            self.data.swapchain_data.swapchain_format,
+            self.data.swapchain_data.vk_extent,
+            self.data.swapchain_data.vk_format,
             self.data.depth_data.depth_format,
             self.data.device_data.max_msaa_samples,
             &[
@@ -514,7 +514,7 @@ impl App {
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
-            self.data.swapchain_data.swapchain_images.len()
+            self.data.swapchain_data.vk_images.len()
         )?;
 
         self.data.descriptor_data.update_global_descriptor_set(
@@ -528,7 +528,7 @@ impl App {
         )?;
 
         self.data.sync_data.images_in_flight.resize(
-            self.data.swapchain_data.swapchain_images.len(),
+            self.data.swapchain_data.vk_images.len(),
             vk::Fence::null()
         );
 
@@ -542,7 +542,7 @@ impl App {
         unsafe {self.device.wait_for_fences(&[in_flight_fence], true, u64::MAX)?};
 
         let result = unsafe { self.device.acquire_next_image_khr(
-            self.data.swapchain_data.swapchain,
+            self.data.swapchain_data.vk_swapchain,
             u64::MAX,
             self.data.sync_data.image_available_semaphores[self.frame],
             vk::Fence::null(),
@@ -596,7 +596,7 @@ impl App {
                 .queue_submit(self.data.device_data.graphics_queue, &[submit_info], in_flight_fence)?;
         }
 
-        let swapchains = &[self.data.swapchain_data.swapchain];
+        let swapchains = &[self.data.swapchain_data.vk_swapchain];
         let image_indices = &[image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(signal_semaphores)
@@ -621,7 +621,7 @@ impl App {
         let view = self.data.camera_data.get_view_matrix();
 
         let proj = CORRECTION * self.data.camera_data.get_projection_matrix(
-            self.data.swapchain_data.swapchain_extent.width as f32 / self.data.swapchain_data.swapchain_extent.height as f32,
+            self.data.swapchain_data.vk_extent.width as f32 / self.data.swapchain_data.vk_extent.height as f32,
             Some(0.1),
             Some(1000.0)
         );
@@ -670,7 +670,7 @@ pub struct AppData {
     // Physical Device / Logical Device
     pub device_data: GPUContext,
     // Swapchain
-    pub swapchain_data: SwapchainData,
+    pub swapchain_data: Swapchain,
     // Pipeline
     pub descriptor_layout_data: DescriptorLayoutData,
     pub pipeline_data: Pipeline,
@@ -697,55 +697,6 @@ pub struct AppData {
 
     // app-data const
     pub default_texture: TextureData,
-}
-
-#[derive(Clone, Debug)]
-pub struct SwapchainData {
-    pub swapchain_format: vk::Format,
-    pub swapchain_extent: vk::Extent2D,
-    pub swapchain: vk::SwapchainKHR,
-    pub swapchain_images: Vec<vk::Image>,
-    pub swapchain_image_views: Vec<vk::ImageView>,
-}
-
-impl SwapchainData {
-    pub fn create(
-        window: &Window,
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        surface: vk::SurfaceKHR,
-        queue_family_indices: &mut QueueFamilyIndices
-    ) -> Result<Self> {
-        let (swapchain, swapchain_format, swapchain_extent, swapchain_images) = create_swapchain(
-            window,
-            instance,
-            device,
-            physical_device,
-            surface,
-            queue_family_indices
-        )?;
-
-        let swapchain_image_views = create_swapchain_image_views(
-            &device,
-            &swapchain_images,
-            swapchain_format
-        )?;
-
-        Ok(Self {
-            swapchain_format,
-            swapchain_extent,
-            swapchain,
-            swapchain_images,
-            swapchain_image_views
-        })
-    }
-
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&self, device: &Device) {
-        self.swapchain_image_views.iter().for_each(|v| device.destroy_image_view(*v, None));
-        device.destroy_swapchain_khr(self.swapchain, None);
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -982,13 +933,13 @@ impl CommandData {
     pub fn create(
         device: &Device,
         queue_family_indices: &mut QueueFamilyIndices,
-        swapchain_images: &[vk::Image]
+        vk_images: &[vk::Image]
     ) -> Result<Self> {
         let command_pool = create_command_pool(device, queue_family_indices)?;
         let command_pools = create_command_pools(
             device,
             queue_family_indices,
-            swapchain_images.len(),
+            vk_images.len(),
         )?;
         let setup_command_buffer = create_setup_command_buffer(device, command_pool)?;
         let (command_buffers, secondary_command_buffers) = create_command_buffers(
@@ -1023,7 +974,7 @@ impl CommandData {
         ecs_context: &mut ECSContext,
         pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
-        swapchain_data: &SwapchainData,
+        swapchain_data: &Swapchain,
         color_data: &ColorData,
         depth_data: &DepthData,
         descriptor_data: &DescriptorData,
@@ -1058,7 +1009,7 @@ impl CommandData {
 
         let render_area = vk::Rect2D::builder()
             .offset(vk::Offset2D::default())
-            .extent(swapchain_data.swapchain_extent);
+            .extent(swapchain_data.vk_extent);
 
         let color_attachment = vk::RenderingAttachmentInfo::builder()
             .image_view(color_data.color_image_view)
@@ -1066,7 +1017,7 @@ impl CommandData {
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .resolve_mode(vk::ResolveModeFlags::AVERAGE)
-            .resolve_image_view(swapchain_data.swapchain_image_views[image_index])
+            .resolve_image_view(swapchain_data.vk_image_views[image_index])
             .resolve_image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
             .clear_value(color_clear_value);
 
@@ -1086,7 +1037,7 @@ impl CommandData {
 
         Self::transition_for_render(
             device,
-            swapchain_data.swapchain_images[image_index],
+            swapchain_data.vk_images[image_index],
             command_buffer
         );
 
@@ -1097,7 +1048,7 @@ impl CommandData {
             ecs_context,
             pipeline_data,
             buffers_data,
-            &[swapchain_data.swapchain_format],
+            &[swapchain_data.vk_format],
             depth_data,
             descriptor_data,
             msaa_samples,
@@ -1112,7 +1063,7 @@ impl CommandData {
 
         Self::transition_for_present(
             device,
-            swapchain_data.swapchain_images[image_index],
+            swapchain_data.vk_images[image_index],
             command_buffer
         );
 
@@ -1128,7 +1079,7 @@ impl CommandData {
         ecs_context: &mut ECSContext,
         pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
-        swapchain_formats: &[vk::Format],
+        vk_formats: &[vk::Format],
         depth_data: &DepthData,
         descriptor_data: &DescriptorData,
         msaa_samples: vk::SampleCountFlags,
@@ -1225,7 +1176,7 @@ impl CommandData {
         let command_buffer = self.secondary_command_buffers[image_index];
 
         let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
-            .color_attachment_formats(swapchain_formats)
+            .color_attachment_formats(vk_formats)
             .depth_attachment_format(depth_data.depth_format)
             .rasterization_samples(msaa_samples);
 
@@ -1495,7 +1446,7 @@ impl ColorData {
         extent_width: u32,
         extent_height: u32,
         samples_count: vk::SampleCountFlags,
-        swapchain_format: vk::Format,  
+        vk_format: vk::Format,  
     ) -> Result<Self> {
         let (color_image, color_image_memory, color_image_view) = create_color_objects(
             instance,
@@ -1504,7 +1455,7 @@ impl ColorData {
             extent_width,
             extent_height,
             samples_count,
-            swapchain_format,
+            vk_format,
         )?;
 
         Ok(Self {

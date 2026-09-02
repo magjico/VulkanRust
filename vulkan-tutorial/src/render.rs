@@ -23,3 +23,4 @@ pub use uniform::InstanceData;
 pub use swapchain::create_swapchain;
 pub use swapchain::create_swapchain_image_views;
 pub use swapchain::SwapchainSupport;
+pub use swapchain::Swapchain;
