@@ -212,49 +212,31 @@ impl App {
         // 1. surface
         let surface = unsafe { vk_window::create_surface(&instance, &window, &window)? };
         // 2. device
-        let physical_device = pick_best_physical_device(
-            &instance,
-            surface,
-            &mandatory_feats,
-            &optional_feats,
-            &DEVICE_EXTENSIONS,
-            &[] as &[vk::ExtensionName],
-            mandatory_queue_flags,
-            false
-        )?;
-        let msaa_samples = get_max_msaa_samples(&instance, physical_device);
-        let mut queue_family_indices = QueueFamilyIndices::create(
-            &instance,
-            physical_device,
-            surface
-        )?;
-        let (device, graphics_queue, present_queue) = create_logical_device(
+        let gpu_requirements = GPURequirements {
+            mandatory_features:     mandatory_feats,
+            optional_features:      optional_feats,
+            mandatory_extensions:   DEVICE_EXTENSIONS.to_vec(),
+            optional_extensions:    (&[] as &[vk::ExtensionName]).to_vec(),
+            queue_flags:            mandatory_queue_flags,
+        };
+
+        let (mut device_data, device) = GPUContext::create(
             &entry,
             &instance,
-            physical_device,
-            &mut queue_family_indices,
-            VALIDATION_ENABLED,
-            VALIDATION_LAYER,
-            DEVICE_EXTENSIONS
+            surface,
+            &gpu_requirements,
+            false,
         )?;
 
-        let mut device_data= DeviceData::create(
-            physical_device,
-            graphics_queue,
-            present_queue,
-            msaa_samples,
-            queue_family_indices
-        );
-
         // 3. ECS Context
-        let mut ecs_context = init_ecs_context(&device, &instance, physical_device)?;
+        let mut ecs_context = init_ecs_context(&device, &instance, device_data.physical_device)?;
 
         // 4. swapchain
         let swapchain_data = SwapchainData::create(
             window,
             &instance,
             &device,
-            physical_device,
+            device_data.physical_device,
             surface,
             &mut device_data.queue_family_indices
         )?;
@@ -270,10 +252,10 @@ impl App {
         let color_data = ColorData::create(
             &instance,
             &device,
-            physical_device,
+            device_data.physical_device,
             swapchain_data.swapchain_extent.width,
             swapchain_data.swapchain_extent.height,
-            msaa_samples,
+            device_data.max_msaa_samples,
             swapchain_data.swapchain_format
         )?;
 
@@ -281,10 +263,10 @@ impl App {
         let depth_data = DepthData::create(
             &instance,
             &device,
-            physical_device,
+            device_data.physical_device,
             swapchain_data.swapchain_extent.width,
             swapchain_data.swapchain_extent.height,
-            msaa_samples,
+            device_data.max_msaa_samples,
         )?;
 
         // 8. pipeline
@@ -292,12 +274,20 @@ impl App {
 
         let pipeline_data = Pipeline::new(
             &device,
-            &[(&[VERT, FRAG], &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT])],
+            &[
+                (VERT, vk::ShaderStageFlags::VERTEX),
+                (FRAG, vk::ShaderStageFlags::FRAGMENT)
+            ],
             swapchain_data.swapchain_extent,
             swapchain_data.swapchain_format,
             depth_data.depth_format,
-            msaa_samples,
-            &descriptor_layout_data,
+            device_data.max_msaa_samples,
+            &[
+                descriptor_layout_data.global_set_layout,
+                descriptor_layout_data.material_set_layout,
+                descriptor_layout_data.skin_set_layout,
+                descriptor_layout_data.instance_set_layout,
+            ],
         )?;
         
 		// 8 - 9. load .glb models and textures
@@ -308,9 +298,9 @@ impl App {
 		load_gltf_models(
 			&device,
 			&instance,
-			physical_device,
+			device_data.physical_device,
 			command_data.setup_command_buffer,
-			graphics_queue,
+			device_data.graphics_queue,
 			&mut models,
 			&mut textures,
 			&mut model_registry
@@ -319,25 +309,25 @@ impl App {
 		let default_texture = create_default_texture(
 			&instance,
 			&device,
-			physical_device,
+			device_data.physical_device,
 			command_data.setup_command_buffer,
-			graphics_queue
+			device_data.graphics_queue
 		)?;
 
         // 10. buffers
         let buffers_data = BuffersData::create(
             &instance,
             &device,
-            physical_device,
+            device_data.physical_device,
             &models,
             command_data.setup_command_buffer,
-            graphics_queue,
+            device_data.graphics_queue,
             swapchain_data.swapchain_images.len(),
         )?;
 
 		// 11. lights
         // TODO: implement multiple type of light
-        let lights = create_default_lightning(&instance, &device, physical_device)?;
+        let lights = create_default_lightning(&instance, &device, device_data.physical_device)?;
 
         // 12. descriptor
         let descriptor_data = DescriptorData::create(
@@ -489,7 +479,7 @@ impl App {
             self.data.device_data.physical_device,
             self.data.swapchain_data.swapchain_extent.width,
             self.data.swapchain_data.swapchain_extent.height,
-            self.data.device_data.msaa_samples,
+            self.data.device_data.max_msaa_samples,
             self.data.swapchain_data.swapchain_format,
         )?;
 
@@ -499,18 +489,25 @@ impl App {
             self.data.device_data.physical_device,
             self.data.swapchain_data.swapchain_extent.width,
             self.data.swapchain_data.swapchain_extent.height,
-            self.data.device_data.msaa_samples,
+            self.data.device_data.max_msaa_samples,
         )?;
 
-        self.data.pipeline_data = PipelineData::create(
+        self.data.pipeline_data = Pipeline::new(
             &self.device,
-            self.data.swapchain_data.swapchain_format,
+            &[
+                (VERT, vk::ShaderStageFlags::VERTEX),
+                (FRAG, vk::ShaderStageFlags::FRAGMENT)
+            ],
             self.data.swapchain_data.swapchain_extent,
+            self.data.swapchain_data.swapchain_format,
             self.data.depth_data.depth_format,
-            &self.data.descriptor_layout_data,
-            self.data.device_data.msaa_samples,
-            VERT,
-            FRAG,
+            self.data.device_data.max_msaa_samples,
+            &[
+                self.data.descriptor_layout_data.global_set_layout,
+                self.data.descriptor_layout_data.material_set_layout,
+                self.data.descriptor_layout_data.skin_set_layout,
+                self.data.descriptor_layout_data.instance_set_layout,
+            ],
         )?;
 
         (self.data.buffers_data.uniform_buffers, self.data.buffers_data.uniform_buffers_memory) = create_uniform_buffers(
@@ -574,7 +571,7 @@ impl App {
             &self.data.color_data,
             &self.data.depth_data,
             &self.data.descriptor_data,
-            self.data.device_data.msaa_samples,
+            self.data.device_data.max_msaa_samples,
             image_index,
             self.frame
         )?;
@@ -666,17 +663,17 @@ impl App {
 //===================================================
 
 /// The Vulkan handles and associated properties used by our Vulkan app.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AppData {
     // Surface
     pub surface: vk::SurfaceKHR,
     // Physical Device / Logical Device
-    pub device_data: DeviceData,
+    pub device_data: GPUContext,
     // Swapchain
     pub swapchain_data: SwapchainData,
     // Pipeline
     pub descriptor_layout_data: DescriptorLayoutData,
-    pub pipeline_data: PipelineData,
+    pub pipeline_data: Pipeline,
     // Textures
 	pub textures_data: TexturesStorage,
     // Buffers
@@ -700,35 +697,6 @@ pub struct AppData {
 
     // app-data const
     pub default_texture: TextureData,
-}
-
-#[derive(Clone, Debug)]
-pub struct DeviceData {
-    pub physical_device: vk::PhysicalDevice,
-    pub graphics_queue: vk::Queue,
-    pub present_queue: vk::Queue,
-	pub msaa_samples: vk::SampleCountFlags,
-    // QueueFamily
-    pub queue_family_indices: QueueFamilyIndices,
-}
-
-impl DeviceData {
-    pub fn create(
-        physical_device: vk::PhysicalDevice,
-        graphics_queue: vk::Queue,
-        present_queue: vk::Queue,
-        msaa_samples: vk::SampleCountFlags,
-        // QueueFamily
-        queue_family_indices: QueueFamilyIndices,
-    ) -> Self {
-        Self {
-            physical_device,
-            graphics_queue,
-            present_queue,
-            msaa_samples,
-            queue_family_indices,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1053,7 +1021,7 @@ impl CommandData {
         &mut self,
         device: &Device,
         ecs_context: &mut ECSContext,
-        pipeline_data: &PipelineData,
+        pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
         swapchain_data: &SwapchainData,
         color_data: &ColorData,
@@ -1158,7 +1126,7 @@ impl CommandData {
         &mut self,
         device: &Device,
         ecs_context: &mut ECSContext,
-        pipeline_data: &PipelineData,
+        pipeline_data: &Pipeline,
         buffers_data: &BuffersData,
         swapchain_formats: &[vk::Format],
         depth_data: &DepthData,
@@ -1272,14 +1240,14 @@ impl CommandData {
         unsafe {
             device.begin_command_buffer(command_buffer, &info)?;
 
-            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_data.pipeline);
+            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_data.vk_pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers_data.interleaved_buffer], &[0]);
             device.cmd_bind_index_buffer(command_buffer, buffers_data.interleaved_buffer, buffers_data.interleaved_offset, vk::IndexType::UINT32);
         
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                pipeline_data.pipeline_layout,
+                pipeline_data.vk_layout,
                 0,
                 &[descriptor_data.global_descriptor_sets[image_index]],
                 &[]
@@ -1289,7 +1257,7 @@ impl CommandData {
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                pipeline_data.pipeline_layout,
+                pipeline_data.vk_layout,
                 2,
                 &[descriptor_data.skinning_descriptor_set],
                 &[]
@@ -1299,7 +1267,7 @@ impl CommandData {
 			device.cmd_bind_descriptor_sets(
 				command_buffer,
 				vk::PipelineBindPoint::GRAPHICS,
-				pipeline_data.pipeline_layout,
+				pipeline_data.vk_layout,
 				3,
 				&[descriptor_data.instance_descriptor_set],
 				&[]
@@ -1318,7 +1286,7 @@ impl CommandData {
                     device.cmd_bind_descriptor_sets(
                         command_buffer,
                         vk::PipelineBindPoint::GRAPHICS,
-                        pipeline_data.pipeline_layout,
+                        pipeline_data.vk_layout,
                         1,
                         &[descriptor_data.material_descriptor_sets[item.material_set_id.0]],
                         &[]
@@ -1346,14 +1314,14 @@ impl CommandData {
 
                 device.cmd_push_constants(
                     command_buffer,
-                    pipeline_data.pipeline_layout,
+                    pipeline_data.vk_layout,
                     vk::ShaderStageFlags::VERTEX,
                     0,
                     &push_bytes[..frag_offset as usize]
                 );
                 device.cmd_push_constants(
                     command_buffer,
-                    pipeline_data.pipeline_layout,
+                    pipeline_data.vk_layout,
                     vk::ShaderStageFlags::FRAGMENT,
                     frag_offset,
                     &push_bytes[frag_offset as usize..],
