@@ -3,6 +3,7 @@ mod device;
 mod shader;
 mod pipeline;
 mod instance;
+mod context;
 
 pub use memory::get_memory_type_index;
 
@@ -22,3 +23,6 @@ pub use shader::ShaderStagesBuilder;
 pub use pipeline::Pipeline;
 
 pub use instance::create_instance;
+
+pub use context::GPURequirements;
+pub use context::GPUContext;
