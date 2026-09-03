@@ -1,18 +1,27 @@
 //! Here is everything that is recorded during the rendering phases
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use vulkanalia::prelude::v1_0::*;
+use vulkanalia::vk::{
+	KhrSynchronization2ExtensionDeviceCommands,
+	KhrDynamicRenderingExtensionDeviceCommands
+};
 
 use super::{
 	Descriptors,
 	InstanceData,
 	Swapchain,
 	DepthAttachment,
-	ColorAttachment
+	ColorAttachment,
+	PushConstants
 };
 
 use crate::math::Mat4;
-use crate::scene::ECSContext;
+use crate::scene::{
+	ECSContext,
+	ModelsStorage,
+	InstanceBuffer,
+};
 use crate::gpu::{
 	QueueFamilyIndices,
 	Pipeline
@@ -25,10 +34,13 @@ use crate::resources::{
 	create_command_buffers
 };
 use crate::type_safety::{
+	NodeId,
 	ModelId,
 	MaterialId,
-	MaterialSetId
+	MaterialSetId,
 };
+
+use crate::constants::{FRAME_STRIDE};
 
 // typing and doc import
 
@@ -155,6 +167,371 @@ impl CommandRecorder {
         image_index:		usize,
         frame_index:		usize,
 	) -> Result<()> {
+		// Pool
+        let command_pool = self.frames_pools[image_index];
+        unsafe { device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())? };
 
+        // Commands
+        let command_buffer = self.primary_command_buffers[image_index];
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        unsafe { device.begin_command_buffer(command_buffer, &info)? };
+
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(swapchain.vk_extent);
+
+        let color_rendering_info = vk::RenderingAttachmentInfo::builder()
+            .image_view(color_attachment.attachment().vk_image_view)
+            .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(swapchain.vk_image_views[image_index])
+            .resolve_image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
+            .clear_value(color_clear_value);
+
+        let depth_rendering_info = vk::RenderingAttachmentInfo::builder()
+            .image_view(depth_attachment.attachment.vk_image_view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(depth_clear_value);
+
+        let rendering_info = vk::RenderingInfo::builder()
+            .flags(vk::RenderingFlagsKHR::CONTENTS_SECONDARY_COMMAND_BUFFERS)
+            .render_area(render_area)
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_rendering_info))
+            .depth_attachment(&depth_rendering_info);
+
+        Self::transition_for_render(
+            device,
+            swapchain.vk_images[image_index],
+            command_buffer
+        );
+
+        unsafe { device.cmd_begin_rendering_khr(command_buffer, &rendering_info); }
+
+        let secondary_command_buffer = self.record_secondary_command_buffer(
+            device,
+            ecs_context,
+            graphic_pipeline,
+            buffers,
+            &[swapchain.vk_format],
+            depth_attachment,
+            descriptors,
+            msaa_samples,
+            image_index,
+            frame_index
+        )?;
+
+        unsafe { 
+            device.cmd_execute_commands(command_buffer, &[secondary_command_buffer]);
+            device.cmd_end_rendering_khr(command_buffer);
+        };
+
+        Self::transition_for_present(
+            device,
+            swapchain.vk_images[image_index],
+            command_buffer
+        );
+
+        unsafe { device.end_command_buffer(command_buffer)? };
+
+        Ok(())
 	}
+
+	/// record draws inside a unique secondary command buffer
+	fn record_secondary_command_buffer(
+        &mut self,
+        device:				&Device,
+        ecs_context:		&mut ECSContext,
+        graphic_pipeline:	&Pipeline,
+        buffers:			&Buffers,
+        swapchain_formats:	&[vk::Format],
+        depth_attachment:	&DepthAttachment,
+        descriptors:		&Descriptors,
+        msaa_samples:		vk::SampleCountFlags,
+        image_index:		usize,
+        frame_index:		usize
+    ) -> Result<vk::CommandBuffer> {
+		// TODO: instance_data, draw_list and sorted_entities should be define inside record_secondary_command_buffer not inside the struct CommandData
+        self.instance_data.clear();
+        self.draw_list.clear();
+		self.sorted_entities.clear();
+
+		let models = ecs_context.world.get_resource::<ModelsStorage>()
+            .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+
+		// Step 1 - Draw Sorting
+		// 1.a - gather entities, sorted by model
+		self.sorted_entities.extend(
+			ecs_context.cached_renderable_query
+				.iter(&ecs_context.world)
+				.map(|(global, mesh_handle, skeleton)| {
+					let ssbo_offset = skeleton
+						.map(|s| s.ssbo_offset + (frame_index * FRAME_STRIDE) as u32)
+						.unwrap_or(PushConstants::NO_SKIN);
+
+					EntityInstance {
+						model_id: mesh_handle.model_id,
+						world_mat: global.0,
+						ssbo_offset
+					}
+				})	
+		);
+
+		self.sorted_entities.sort_unstable_by_key(|e| e.model_id.0);
+
+		// 1.b - instance data + model ranges
+		let mut model_ranges: Vec<(ModelId, u32, u32)> = Vec::new();
+
+		for entity in &self.sorted_entities {
+			match model_ranges.last_mut() {
+				Some((last_id, _, count)) if *last_id == entity.model_id => *count += 1,
+				_ => model_ranges.push((entity.model_id, self.instance_data.len() as u32, 1)),
+			}
+
+			self.instance_data.push(
+				InstanceData {
+					model: entity.world_mat,
+					ssbo_offset: entity.ssbo_offset,
+					_padding: [0; 3],
+				}
+			)
+		}
+
+		// 1.c - one DrawItem by (model, node, primitive)
+		for (model_id, instance_first, instance_count) in &model_ranges {
+			let model = models.get_model(*model_id);
+			let material_offset = models.get_material_offset(*model_id);
+
+			for (i, node) in model.graph.iter().enumerate() {
+				let Some(mesh) = &node.value.mesh else { continue };
+
+				let node_id = NodeId(i);
+				let node_matrix = model.get_global_matrix_of(node_id);
+				let mesh_offset = *buffers.mesh_offsets
+					.get(&(*model_id, node_id))
+					.unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", model_id, node_id));
+
+				for primitive in &mesh.primitives {
+					self.draw_list.push(DrawItem {
+						material_set_id: primitive.material_id
+							.map(|id| id.to_set_id(material_offset))
+							.unwrap_or(MaterialSetId(0)),
+						model_id: *model_id,
+						material_id: primitive.material_id, 
+						node_matrix,
+						first_index: mesh_offset.first_index + primitive.first_index,
+						vertex_offset: mesh_offset.vertex_offset,
+						index_count: primitive.index_count,
+						instance_first: *instance_first,
+						instance_count: *instance_count
+					});
+				}
+			}
+		}
+
+        self.draw_list.sort_unstable_by_key(|draw_item| draw_item.material_set_id);
+
+		// 1.d - Upload instance data
+		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
+			.ok_or_else(|| anyhow!("InstanceBuffer not found in world"))?;
+		instance_buffer.write(frame_index, &self.instance_data);
+
+        // Step 2 - Draw Binding with state tracking
+        let command_buffer = self.secondary_command_buffers[image_index];
+
+        let mut inheritance_rendering_info = vk::CommandBufferInheritanceRenderingInfo::builder()
+            .color_attachment_formats(swapchain_formats)
+            .depth_attachment_format(depth_attachment.vk_format)
+            .rasterization_samples(msaa_samples);
+
+        let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
+            .push_next(&mut inheritance_rendering_info);
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+            .inheritance_info(&inheritance_info);
+
+
+        unsafe {
+            device.begin_command_buffer(command_buffer, &info)?;
+
+            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, graphic_pipeline.vk_pipeline);
+            device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers.interleaved_buffer], &[0]);
+            device.cmd_bind_index_buffer(command_buffer, buffers.interleaved_buffer, buffers.interleaved_offset, vk::IndexType::UINT32);
+        
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                graphic_pipeline.vk_layout,
+                0,
+                &[descriptors.global_descriptor_sets[image_index]],
+                &[]
+            );
+
+			// skin binding
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                graphic_pipeline.vk_layout,
+                2,
+                &[descriptors.skinning_descriptor_set],
+                &[]
+            );
+
+			// entity binding
+			device.cmd_bind_descriptor_sets(
+				command_buffer,
+				vk::PipelineBindPoint::GRAPHICS,
+				graphic_pipeline.vk_layout,
+				3,
+				&[descriptors.instance_descriptor_set],
+				&[]
+			);
+        }
+
+        let mut last_material: Option<MaterialSetId> = None;
+
+        for item in &self.draw_list {
+            // state tracking
+            if last_material != Some(item.material_set_id) {
+                last_material = Some(item.material_set_id);
+
+                unsafe {
+                    // materials binding
+                    device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        graphic_pipeline.vk_layout,
+                        1,
+                        &[descriptors.material_descriptor_sets[item.material_set_id.0]],
+                        &[]
+                    );
+                }
+            }
+
+            let material = {
+                if let Some(material_id) = item.material_id {
+                    Some(models.get_model(item.model_id).get_material(material_id))
+                } else {
+                    None
+                }
+            };
+
+            let push_constant = PushConstants::new(item.node_matrix, material);
+
+            unsafe {
+                let push_bytes = std::slice::from_raw_parts(
+                    &push_constant as *const PushConstants as *const u8,
+                    size_of::<PushConstants>()
+                );
+                
+                let frag_offset = PushConstants::get_frag_offset();
+
+                device.cmd_push_constants(
+                    command_buffer,
+                    graphic_pipeline.vk_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    &push_bytes[..frag_offset as usize]
+                );
+                device.cmd_push_constants(
+                    command_buffer,
+                    graphic_pipeline.vk_layout,
+                    vk::ShaderStageFlags::FRAGMENT,
+                    frag_offset,
+                    &push_bytes[frag_offset as usize..],
+                );
+
+                device.cmd_draw_indexed(
+                    command_buffer,
+                    item.index_count,
+                    item.instance_count,
+                    item.first_index,
+                    item.vertex_offset as i32,
+                    item.instance_first
+                );
+            }
+        } 
+
+        unsafe { device.end_command_buffer(command_buffer)?; }
+        Ok(command_buffer)
+    }
+
+	fn transition_for_render(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags2::empty())
+            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) // TODO: if blending then need to access READ aswell.
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
+    }
+
+	fn transition_for_present(
+        device: &Device,
+        swapchain_image: vk::Image,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        let barrier = vk::ImageMemoryBarrier2::builder()
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::empty())
+            .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+            .image(swapchain_image)
+            .subresource_range(vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1)
+                .level_count(1)
+                .build()
+            );
+        
+        let barriers = [barrier];
+        let dependency_info = vk::DependencyInfo::builder()
+            .image_memory_barriers(&barriers);
+
+        unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
+    }
 }

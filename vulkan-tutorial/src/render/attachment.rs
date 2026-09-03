@@ -5,7 +5,7 @@ use vulkanalia::prelude::v1_0::*;
 use crate::resources::{create_image, create_image_view, get_supported_format};
 
 #[derive(Debug)]
-struct AttachmentImage {
+pub struct AttachmentImage {
 	pub vk_image: vk::Image,
 	pub vk_image_memory: vk::DeviceMemory,
 	pub vk_image_view: vk::ImageView,
@@ -21,7 +21,7 @@ impl AttachmentImage {
 }
 
 #[derive(Debug)]
-pub struct ColorAttachment(pub AttachmentImage);
+pub struct ColorAttachment(AttachmentImage);
 
 impl ColorAttachment {
 	/// Create a 3-color attachment:
@@ -78,6 +78,9 @@ impl ColorAttachment {
     pub unsafe fn destroy(&self, device: &Device) {
 		self.0.destroy(device);
 	}
+
+	#[inline]
+	pub fn attachment(&self) -> &AttachmentImage { &self.0 }
 }
 
 #[derive(Debug)]
