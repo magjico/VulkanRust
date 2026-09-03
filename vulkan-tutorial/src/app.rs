@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use log::*;
 
-use std::collections::HashMap;
 use std::time::Instant;
 use std::ptr::copy_nonoverlapping as memcpy;
 
@@ -23,11 +22,10 @@ use crate::constants::*;
 use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
-use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
+use crate::type_safety::{MaterialId, MaterialSetId, ModelId, NodeId};
 use crate::render::{DescriptorLayouts, Descriptors, Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, ColorAttachment, DepthAttachment};
-use crate::resources::{FrameSync, create_command_pool, create_command_pools, create_setup_command_buffer,
-                        create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
-                        destroy_buffers};
+use crate::resources::{Buffers, FrameSync, create_command_pool, create_command_pools, create_setup_command_buffer,
+                        create_uniform_buffers, create_command_buffers,  destroy_buffers};
 use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
 use crate::math::{Vec3, Vec4, Mat4};
 
@@ -315,7 +313,7 @@ impl App {
 		)?;
 
         // 10. buffers
-        let buffers_data = BuffersData::create(
+        let buffers_data = Buffers::new(
             &instance,
             &device,
             device_data.physical_device,
@@ -677,7 +675,7 @@ pub struct AppData {
     // Textures
 	pub textures_data: TexturesStorage,
     // Buffers
-    pub buffers_data: BuffersData,
+    pub buffers_data: Buffers,
     // Descriptor
     pub descriptor_data: Descriptors,
     // Command Buffers
@@ -697,74 +695,6 @@ pub struct AppData {
 
     // app-data const
     pub default_texture: TextureData,
-}
-
-#[derive(Clone, Debug)]
-pub struct BuffersData {
-    pub interleaved_buffer: vk::Buffer,
-    pub interleaved_buffer_memory: vk::DeviceMemory,
-    pub interleaved_offset: u64,
-    pub mesh_offsets: HashMap<(ModelId, NodeId), MeshOffset>, // key: (model_id, node_id) -> value: (vert_offset, index_offset) 
-    pub uniform_buffers: Vec<vk::Buffer>,
-    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
-}
-
-impl BuffersData {
-    pub fn create(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
-        models: &ModelsStorage,
-        setup_command_buffer: vk::CommandBuffer,
-        graphics_queue: vk::Queue,
-        images_count: usize,
-    ) -> Result<Self> {
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-        let mut mesh_offsets = HashMap::new();
-
-        for (model_id, model) in models.iter().enumerate() {
-            let model_id = ModelId(model_id);
-
-            for (node_idx, node) in model.graph.iter().enumerate() {
-                if let Some(mesh) = &node.value.mesh {
-                    mesh_offsets.insert(
-                        (model_id, NodeId(node_idx)),
-                        MeshOffset {vertex_offset: vertices.len() as u32, first_index: indices.len() as u32 }
-                    );
-
-                    vertices.extend_from_slice(&mesh.vertices);
-                    indices.extend_from_slice(&mesh.indices);
-                }
-            }
-        }
-
-        let (interleaved_buffer, interleaved_buffer_memory, interleaved_offset) = create_interleaved_buffer(
-            instance,
-            device,
-            physical_device,
-            &vertices,
-            &indices,
-            setup_command_buffer,
-            graphics_queue,
-        )?;
-
-        let (uniform_buffers, uniform_buffers_memory) = create_uniform_buffers(
-            instance,
-            device,
-            physical_device,
-            images_count,
-        )?;
-
-        Ok(Self {
-            interleaved_buffer,
-            interleaved_buffer_memory,
-            interleaved_offset,
-            mesh_offsets,
-            uniform_buffers,
-            uniform_buffers_memory,
-        })
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -844,7 +774,7 @@ impl CommandData {
         device: &Device,
         ecs_context: &mut ECSContext,
         pipeline_data: &Pipeline,
-        buffers_data: &BuffersData,
+        buffers_data: &Buffers,
         swapchain_data: &Swapchain,
         color_data: &ColorAttachment,
         depth_data: &DepthAttachment,
@@ -949,7 +879,7 @@ impl CommandData {
         device: &Device,
         ecs_context: &mut ECSContext,
         pipeline_data: &Pipeline,
-        buffers_data: &BuffersData,
+        buffers_data: &Buffers,
         vk_formats: &[vk::Format],
         depth_data: &DepthAttachment,
         descriptor_data: &Descriptors,

@@ -1,15 +1,16 @@
 use anyhow::Result;
 
+use std::collections::HashMap;
 use std::ptr::copy_nonoverlapping as memcpy;
 
 use vulkanalia::prelude::v1_0::*;
 
 use crate::gpu::get_memory_type_index;
 use crate::render::UniformBufferObject;
-use crate::scene::Vertex;
+use crate::scene::{Vertex, ModelsStorage};
+use crate::type_safety::{MeshOffset, ModelId, NodeId};
 
-use super::begin_setup_command_buffer;
-use super::flush_setup_command_buffer;
+use super::{begin_setup_command_buffer, flush_setup_command_buffer};
 
 //================================================
 // Buffers (general)
@@ -309,4 +310,78 @@ pub fn recreate_uniform_buffers(
     )?;
 
     Ok(())
+}
+
+//===============================================
+// Structure for app: Buffers
+//===============================================
+
+// TODO: separate this struct into 2 (GeometryBuffers & UniformBuffers)
+
+#[derive(Debug)]
+pub struct Buffers {
+    pub interleaved_buffer:			vk::Buffer,
+    pub interleaved_buffer_memory:	vk::DeviceMemory,
+    pub interleaved_offset:			u64,
+    pub mesh_offsets:				HashMap<(ModelId, NodeId), MeshOffset>, // key: (model_id, node_id) -> value: (vert_offset, index_offset) 
+    pub uniform_buffers:			Vec<vk::Buffer>,
+    pub uniform_buffers_memory:		Vec<vk::DeviceMemory>,
+}
+
+impl Buffers {
+	pub fn new(
+		instance:				&Instance,
+		device:					&Device,
+		physical_device: 		vk::PhysicalDevice,
+		models:					&ModelsStorage,
+		setup_command_buffer:	vk::CommandBuffer,
+		graphics_queue:			vk::Queue,
+		images_count:			usize,
+	) -> Result<Self> {
+		let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut mesh_offsets = HashMap::new();
+
+        for (model_id, model) in models.iter().enumerate() {
+            let model_id = ModelId(model_id);
+
+            for (node_idx, node) in model.graph.iter().enumerate() {
+                if let Some(mesh) = &node.value.mesh {
+                    mesh_offsets.insert(
+                        (model_id, NodeId(node_idx)),
+                        MeshOffset {vertex_offset: vertices.len() as u32, first_index: indices.len() as u32 }
+                    );
+
+                    vertices.extend_from_slice(&mesh.vertices);
+                    indices.extend_from_slice(&mesh.indices);
+                }
+            }
+        }
+
+        let (interleaved_buffer, interleaved_buffer_memory, interleaved_offset) = create_interleaved_buffer(
+            instance,
+            device,
+            physical_device,
+            &vertices,
+            &indices,
+            setup_command_buffer,
+            graphics_queue,
+        )?;
+
+        let (uniform_buffers, uniform_buffers_memory) = create_uniform_buffers(
+            instance,
+            device,
+            physical_device,
+            images_count,
+        )?;
+
+        Ok(Self {
+            interleaved_buffer,
+            interleaved_buffer_memory,
+            interleaved_offset,
+            mesh_offsets,
+            uniform_buffers,
+            uniform_buffers_memory,
+        })
+	}
 }

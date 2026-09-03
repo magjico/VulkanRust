@@ -3,12 +3,32 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use super::{InstanceData, Swapchain, DepthAttachment, ColorAttachment};
+use super::{
+	Descriptors,
+	InstanceData,
+	Swapchain,
+	DepthAttachment,
+	ColorAttachment
+};
+
 use crate::math::Mat4;
-use crate::gpu::{QueueFamilyIndices, Pipeline};
 use crate::scene::ECSContext;
-use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer, create_command_buffers};
-use crate::type_safety::{ModelId, MaterialId, MaterialSetId};
+use crate::gpu::{
+	QueueFamilyIndices,
+	Pipeline
+};
+use crate::resources::{
+	Buffers,
+	create_command_pool,
+	create_command_pools,
+	create_setup_command_buffer,
+	create_command_buffers
+};
+use crate::type_safety::{
+	ModelId,
+	MaterialId,
+	MaterialSetId
+};
 
 // typing and doc import
 
@@ -126,11 +146,11 @@ impl CommandRecorder {
         device:				&Device,
         ecs_context:		&mut ECSContext,
         graphic_pipeline:	&Pipeline,
-        buffers_data:		&BuffersData,
+        buffers:			&Buffers,
         swapchain:			&Swapchain,
-        color_data:			&ColorAttachment,
-        depth_data:			&DepthAttachment,
-        descriptor_data:	&DescriptorData,
+        color_attachment:	&ColorAttachment,
+        depth_attachment:	&DepthAttachment,
+        descriptors:		&Descriptors,
         msaa_samples:		vk::SampleCountFlags,
         image_index:		usize,
         frame_index:		usize,
