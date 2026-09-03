@@ -3,6 +3,7 @@ mod uniform;
 mod swapchain;
 mod recorder;
 mod attachment;
+mod descriptor;
 
 pub use texture::create_texture_image;
 pub use texture::create_texture_sampler;
@@ -24,3 +25,6 @@ pub use recorder::CommandRecorder;
 
 pub use attachment::ColorAttachment;
 pub use attachment::DepthAttachment;
+
+pub use descriptor::DescriptorLayouts;
+pub use descriptor::Descriptors;

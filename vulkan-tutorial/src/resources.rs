@@ -1,6 +1,7 @@
 mod image;
 mod buffer;
 mod command;
+mod sync;
 
 pub use image::create_image;
 pub use image::transition_image_layout;
@@ -21,3 +22,5 @@ pub use command::create_command_buffers;
 pub use command::create_setup_command_buffer;
 pub use command::begin_setup_command_buffer;
 pub use command::flush_setup_command_buffer;
+
+pub use sync::FrameSync;
