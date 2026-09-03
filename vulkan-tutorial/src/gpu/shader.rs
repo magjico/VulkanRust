@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
-
+// TODO: check refactor
 //===========================================
 // Descriptor Set
 //===========================================
@@ -34,24 +34,6 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
     Ok(descriptor_set_layout)
 }
 
-/// create a unique descriptor set layout for **all skins**.
-pub fn create_skinning_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
-    // Animation joint binding
-    let binding = vk::DescriptorSetLayoutBinding::builder()
-        .binding(0)
-        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::VERTEX);
-
-    let bindings = &[binding];
-    let info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(bindings);
-
-    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
-
-    Ok(descriptor_set_layout)
-}
-
 /// create material set layout in this order:
 /// base color, metallic-roughness, normal map, occlusion map, emissive map.
 /// 
@@ -72,8 +54,8 @@ pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::Desc
     Ok(descriptor_set_layout)
 }
 
-/// create a unique descriptor set layout for all model instances
-pub fn create_instance_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+/// create a unique descriptor set layout for storage type descriptor set
+pub fn create_storage_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     let binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)

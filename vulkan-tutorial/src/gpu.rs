@@ -16,8 +16,7 @@ pub use device::QueueFamilyIndices;
 
 pub use shader::create_global_descriptor_set_layout;
 pub use shader::create_material_descriptor_set_layout;
-pub use shader::create_skinning_descriptor_set_layout;
-pub use shader::create_instance_descriptor_set_layout;
+pub use shader::create_storage_descriptor_set_layout;
 pub use shader::ShaderStagesBuilder;
 
 pub use pipeline::Pipeline;

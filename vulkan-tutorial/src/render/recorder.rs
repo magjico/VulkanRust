@@ -3,7 +3,7 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use super::{InstanceData, Swapchain};
+use super::{InstanceData, Swapchain, DepthAttachment, ColorAttachment};
 use crate::math::Mat4;
 use crate::gpu::{QueueFamilyIndices, Pipeline};
 use crate::scene::ECSContext;
@@ -128,8 +128,8 @@ impl CommandRecorder {
         graphic_pipeline:	&Pipeline,
         buffers_data:		&BuffersData,
         swapchain:			&Swapchain,
-        color_data:			&ColorData,
-        depth_data:			&DepthData,
+        color_data:			&ColorAttachment,
+        depth_data:			&DepthAttachment,
         descriptor_data:	&DescriptorData,
         msaa_samples:		vk::SampleCountFlags,
         image_index:		usize,

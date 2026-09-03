@@ -30,6 +30,7 @@ pub use camera::CameraBuilder;
 pub use light::Light;
 pub use light::LightBuffer;
 
+pub use ecs::StorageBuffer;
 pub use ecs::SkinningBuffer;
 pub use ecs::InstanceBuffer;
 pub use ecs::Time;

@@ -24,11 +24,11 @@ use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
 use crate::type_safety::{MaterialId, MaterialSetId, MeshOffset, ModelId, NodeId};
-use crate::render::{Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, ColorAttachment, DepthAttachment};
-use crate::resources::{create_command_pool, create_command_pools, create_setup_command_buffer,
+use crate::render::{DescriptorLayouts, Descriptors, Swapchain, InstanceData, PushConstants, TextureData, TexturesStorage, UniformBufferObject, ColorAttachment, DepthAttachment};
+use crate::resources::{FrameSync, create_command_pool, create_command_pools, create_setup_command_buffer,
                         create_interleaved_buffer, create_uniform_buffers, create_command_buffers,
                         destroy_buffers};
-use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, Material, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
+use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
 use crate::math::{Vec3, Vec4, Mat4};
 
 //===================================================
@@ -270,7 +270,7 @@ impl App {
         )?;
 
         // 8. pipeline
-        let descriptor_layout_data = DescriptorLayoutData::create(&device)?;
+        let descriptor_layout_data = DescriptorLayouts::new(&device)?;
 
         let pipeline_data = Pipeline::new(
             &device,
@@ -330,7 +330,7 @@ impl App {
         let lights = create_default_lightning(&instance, &device, device_data.physical_device)?;
 
         // 12. descriptor
-        let descriptor_data = DescriptorData::create(
+        let descriptor_data = Descriptors::new(
             &device,
             &ecs_context,
             &descriptor_layout_data,
@@ -349,7 +349,7 @@ impl App {
         spawn_from_brain_stem_instance(&mut ecs_context.world, &model_registry)?;
 
         // 14. sync
-        let sync_data = SyncData::create(
+        let sync_data = FrameSync::new(
             &device,
             MAX_FRAMES_IN_FLIGHT,
             swapchain_data.vk_images.len(),
@@ -517,10 +517,10 @@ impl App {
             self.data.swapchain_data.vk_images.len()
         )?;
 
-        self.data.descriptor_data.update_global_descriptor_set(
+        self.data.descriptor_data.update_global_descriptor_sets(
             &self.device,
             &self.data.buffers_data.uniform_buffers
-        )?;
+        );
 
         (self.data.command_data.command_buffers, self.data.command_data.secondary_command_buffers) = create_command_buffers(
             &self.device,
@@ -672,18 +672,18 @@ pub struct AppData {
     // Swapchain
     pub swapchain_data: Swapchain,
     // Pipeline
-    pub descriptor_layout_data: DescriptorLayoutData,
+    pub descriptor_layout_data: DescriptorLayouts,
     pub pipeline_data: Pipeline,
     // Textures
 	pub textures_data: TexturesStorage,
     // Buffers
     pub buffers_data: BuffersData,
     // Descriptor
-    pub descriptor_data: DescriptorData,
+    pub descriptor_data: Descriptors,
     // Command Buffers
     pub command_data: CommandData,
     // Sync Objects
-    pub sync_data: SyncData,
+    pub sync_data: FrameSync,
     // Depth
     pub depth_data: DepthAttachment,
 	// Render target (now only use for MSAA)
@@ -768,135 +768,6 @@ impl BuffersData {
 }
 
 #[derive(Clone, Debug)]
-pub struct DescriptorLayoutData {
-    pub global_set_layout: vk::DescriptorSetLayout,
-    pub material_set_layout: vk::DescriptorSetLayout,
-    pub skin_set_layout: vk::DescriptorSetLayout,
-    pub instance_set_layout: vk::DescriptorSetLayout,
-}
-
-impl DescriptorLayoutData {
-    pub fn create(
-        device: &Device,
-    ) -> Result<Self> {
-        let global_set_layout = create_global_descriptor_set_layout(device)?;
-        let material_set_layout = create_material_descriptor_set_layout(device)?;
-        let skin_set_layout = create_skinning_descriptor_set_layout(device)?;
-        let instance_set_layout = create_instance_descriptor_set_layout(device)?;
-
-        Ok(Self { global_set_layout, material_set_layout, skin_set_layout, instance_set_layout })
-    }
-
-    #[rustfmt::skip]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        device.destroy_descriptor_set_layout(self.global_set_layout, None);
-        device.destroy_descriptor_set_layout(self.material_set_layout, None);
-        device.destroy_descriptor_set_layout(self.skin_set_layout, None);
-        device.destroy_descriptor_set_layout(self.instance_set_layout, None);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct DescriptorData {
-    pub descriptor_pool: vk::DescriptorPool,
-    pub global_descriptor_sets: Vec<vk::DescriptorSet>,
-    pub material_descriptor_sets: Vec<vk::DescriptorSet>,
-    pub skinning_descriptor_set: vk::DescriptorSet,
-	pub instance_descriptor_set: vk::DescriptorSet,
-}
-
-impl DescriptorData {
-    pub fn  create(
-        device: &Device,
-        ecs_context: &ECSContext,
-        descriptor_layout_data: &DescriptorLayoutData,
-        uniform_buffers: &[vk::Buffer],
-        textures: &TexturesStorage,
-        default_texture: &TextureData,
-		models: &ModelsStorage,
-        light_buffer: &LightBuffer,
-        images_count: usize,
-    ) -> Result<Self> {
-		let materials: Vec<&Material> = models.iter()
-			.flat_map(|model| model.materials_iter())
-			.collect();
-        let materials_count = materials.len();
-
-        let skinning_buffer = ecs_context.world.get_resource::<SkinningBuffer>()
-            .ok_or_else(|| anyhow!("Skinning Buffer not found in ecs_context.world"))?;
-
-		let instance_buffer = ecs_context.world.get_resource::<InstanceBuffer>()
-			.ok_or_else(|| anyhow!("Instance Buffer not found in ecs_context.world"))?;
-
-        let descriptor_pool = create_descriptor_pool(
-            device,
-            images_count		as u32,
-            materials_count		as u32,
-        )?;
-        
-        let global_descriptor_sets = create_global_descriptor_sets(
-            device,
-            images_count,
-            descriptor_layout_data.global_set_layout,
-            descriptor_pool,
-            uniform_buffers,
-            light_buffer,
-        )?;
-
-        let material_descriptor_sets = create_material_descriptor_sets(
-            device,
-            descriptor_layout_data.material_set_layout,
-            descriptor_pool,
-            &materials,
-            textures,
-            default_texture
-        )?;
-
-        debug!("descriptor points to buffer {:?}", skinning_buffer.buffer);
-        let skinning_descriptor_set = create_skinning_descriptor_set(
-            device,
-            descriptor_layout_data.skin_set_layout,
-            descriptor_pool,
-            skinning_buffer,
-        )?;
-
-		let instance_descriptor_set = create_instance_descriptor_set(
-			device,
-			descriptor_layout_data.instance_set_layout,
-			descriptor_pool,
-			instance_buffer
-		)?;
-
-        Ok(Self { descriptor_pool, global_descriptor_sets, material_descriptor_sets, skinning_descriptor_set, instance_descriptor_set })
-    }
-
-    pub fn update_global_descriptor_set(
-        &mut self,
-        device: &Device,
-        uniform_buffers: &[vk::Buffer],
-    ) -> Result<()> {
-        for i in 0..self.global_descriptor_sets.len() {
-            let buffer_info = &[*vk::DescriptorBufferInfo::builder()
-                .buffer(uniform_buffers[i])
-                .offset(0)
-                .range(size_of::<UniformBufferObject>() as u64)];
-
-            let ubo_write = vk::WriteDescriptorSet::builder()
-                .dst_set(self.global_descriptor_sets[i])
-                .dst_binding(0)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .buffer_info(buffer_info);
-
-            unsafe { device.update_descriptor_sets(&[ubo_write], &[] as &[vk::CopyDescriptorSet]); }
-        }   
-
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
 struct EntityInstance {
     model_id:       ModelId,
     model:          Mat4,
@@ -977,7 +848,7 @@ impl CommandData {
         swapchain_data: &Swapchain,
         color_data: &ColorAttachment,
         depth_data: &DepthAttachment,
-        descriptor_data: &DescriptorData,
+        descriptor_data: &Descriptors,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
         frame_index: usize,
@@ -1081,7 +952,7 @@ impl CommandData {
         buffers_data: &BuffersData,
         vk_formats: &[vk::Format],
         depth_data: &DepthAttachment,
-        descriptor_data: &DescriptorData,
+        descriptor_data: &Descriptors,
         msaa_samples: vk::SampleCountFlags,
         image_index: usize,
         frame_index: usize
@@ -1349,42 +1220,5 @@ impl CommandData {
             .image_memory_barriers(&barriers);
 
         unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SyncData {
-    pub image_available_semaphores: Vec<vk::Semaphore>,
-    pub render_finished_semaphores: Vec<vk::Semaphore>,
-    pub in_flight_fences: Vec<vk::Fence>,
-    pub images_in_flight: Vec<vk::Fence>,
-}
-
-impl SyncData {
-    pub fn create(
-        device: &Device,
-        max_frame_in_flight: usize,
-        images_count: usize
-    ) -> Result<Self> {
-        let (image_available_semaphores, render_finished_semaphores, in_flight_fences, images_in_flight) = create_sync_objects(
-            device,
-            max_frame_in_flight,
-            images_count
-        )?;
-
-        Ok(Self {
-            image_available_semaphores,
-            render_finished_semaphores,
-            in_flight_fences,
-            images_in_flight
-        })
-    }
-
-    #[rustfmt::skip]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        self.in_flight_fences.iter().for_each(|f| device.destroy_fence(*f, None)); // also free images_in_flight
-        self.render_finished_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
-        self.image_available_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
     }
 }
