@@ -15,7 +15,8 @@ pub use buffer::create_framebuffers;
 pub use buffer::create_interleaved_buffer;
 pub use buffer::create_uniform_buffers;
 pub use buffer::recreate_uniform_buffers;
-pub use buffer::Buffers;
+pub use buffer::GeometryBuffer;
+pub use buffer::UniformBuffers;
 
 pub use command::create_command_pool;
 pub use command::create_command_pools;

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use vulkanalia::vk::DeviceMemory;
 
 use std::collections::HashMap;
 use std::ptr::copy_nonoverlapping as memcpy;
@@ -313,36 +314,47 @@ pub fn recreate_uniform_buffers(
 }
 
 //===============================================
-// Structure for app: Buffers
+// Structure for app: GeometryBuffer & UniformBuffers
 //===============================================
 
-// TODO: separate this struct into 2 (GeometryBuffers & UniformBuffers)
-
+/// Vertex and index data of every loaded model, packed into a single shared buffer.
+///
+/// Vertices and indices of all models are concatenated at load time so the renderer
+/// binds them once per frame and draws each mesh through offsets instead. Those
+/// offsets are recorded in `mesh_offsets`, keyed by the model and node they belong to.
+///
+/// This buffer is `DEVICE_LOCAL` and immutable once built; it survives swapchain
+/// recreation.
+///
+/// ## Fields
+///
+/// - `buffer` ( [vk::Buffer] ) - Holds vertices first, then indices.
+/// - `memory` ( [vk::DeviceMemory] ) - Backing allocation.
+/// - `interleaved_offset` ( `u64` ) - Byte offset where the index data starts.
+/// - `mesh_offsets` ( HashMap<([ModelId], [NodeId]), [MeshOffset]> ) - Where each mesh sits in the buffer. The key pairs a model with a node because node indices restart at zero for every model.
 #[derive(Debug)]
-pub struct Buffers {
-    pub interleaved_buffer:			vk::Buffer,
-    pub interleaved_buffer_memory:	vk::DeviceMemory,
-    pub interleaved_offset:			u64,
-    pub mesh_offsets:				HashMap<(ModelId, NodeId), MeshOffset>, // key: (model_id, node_id) -> value: (vert_offset, index_offset) 
-    pub uniform_buffers:			Vec<vk::Buffer>,
-    pub uniform_buffers_memory:		Vec<vk::DeviceMemory>,
+pub struct GeometryBuffer {
+	pub vk_buffer:			vk::Buffer,
+	pub vk_buffer_memory:	vk::DeviceMemory,
+	pub interleaved_offset:	u64,
+	pub mesh_offsets:		HashMap<(ModelId, NodeId), MeshOffset>,
 }
 
-impl Buffers {
+
+impl GeometryBuffer {
 	pub fn new(
 		instance:				&Instance,
 		device:					&Device,
-		physical_device: 		vk::PhysicalDevice,
+		physical_device:		vk::PhysicalDevice,
 		models:					&ModelsStorage,
 		setup_command_buffer:	vk::CommandBuffer,
-		graphics_queue:			vk::Queue,
-		images_count:			usize,
+		graphics_queue:			vk::Queue
 	) -> Result<Self> {
 		let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let mut mesh_offsets = HashMap::new();
 
-        for (model_id, model) in models.iter().enumerate() {
+		for (model_id, model) in models.iter().enumerate() {
             let model_id = ModelId(model_id);
 
             for (node_idx, node) in model.graph.iter().enumerate() {
@@ -358,7 +370,7 @@ impl Buffers {
             }
         }
 
-        let (interleaved_buffer, interleaved_buffer_memory, interleaved_offset) = create_interleaved_buffer(
+        let (vk_buffer, vk_buffer_memory, interleaved_offset) = create_interleaved_buffer(
             instance,
             device,
             physical_device,
@@ -368,20 +380,66 @@ impl Buffers {
             graphics_queue,
         )?;
 
-        let (uniform_buffers, uniform_buffers_memory) = create_uniform_buffers(
+		Ok(Self {
+			vk_buffer,
+			vk_buffer_memory,
+			interleaved_offset,
+			mesh_offsets
+		})
+	}
+
+	#[rustfmt::skip]
+    #[allow(unsafe_op_in_unsafe_fn)]
+	pub unsafe fn destroy(&self, device: &Device) {
+		destroy_buffers(device, &[self.vk_buffer], &[self.vk_buffer_memory]);
+	}
+
+	#[inline]
+	pub fn get_mesh_offset(&self, model_id: ModelId, node_id: NodeId) -> MeshOffset {
+		*self.mesh_offsets.get(&(model_id, node_id))
+			.unwrap_or_else(|| panic!("No mesh offset for ({:?}, {:?})", model_id, node_id))
+	}
+}
+
+/// Per-swapchain-image uniform buffers holding the frame's camera and PBR parameters.
+///
+/// One buffer per image is required because the CPU writes the next frame's values
+/// while a pending frame may still be reading the previous ones. They are destroyed
+/// and recreated on swapchain recreation, since the image count may change.
+///
+/// ## Fields
+///
+/// - `vk_buffers` ( Vec<[vk::Buffer]> ) - One buffer per swapchain image, in index order.
+/// - `vk_buffers_memories` ( Vec<[vk::DeviceMemory]> ) - Backing allocations, in matching order.
+#[derive(Debug)]
+pub struct UniformBuffers {
+	pub vk_buffers:				Vec<vk::Buffer>,
+	pub vk_buffers_memories:	Vec<DeviceMemory>
+}
+
+impl UniformBuffers {
+	pub fn new(
+		instance:			&Instance,
+		device:				&Device,
+		physical_device:	vk::PhysicalDevice,
+		images_count:	usize,
+	) -> Result<Self> {
+		let (vk_buffers, vk_buffers_memories) = create_uniform_buffers(
             instance,
             device,
             physical_device,
             images_count,
         )?;
 
-        Ok(Self {
-            interleaved_buffer,
-            interleaved_buffer_memory,
-            interleaved_offset,
-            mesh_offsets,
-            uniform_buffers,
-            uniform_buffers_memory,
-        })
+		Ok(Self {
+			vk_buffers,
+			vk_buffers_memories
+		})
+	}
+
+	#[rustfmt::skip]
+    #[allow(unsafe_op_in_unsafe_fn)]
+	pub unsafe fn destroy(&self, device: &Device) {
+		destroy_buffers(device, &self.vk_buffers, &self.vk_buffers_memories);
 	}
 }

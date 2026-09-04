@@ -25,8 +25,8 @@ use crate::setup::*;
 use crate::gpu::*;
 use crate::input::InputBindings;
 use crate::render::{CommandRecorder, DescriptorLayouts, Descriptors, Swapchain, TextureData, TexturesStorage, UniformBufferObject, ColorAttachment, DepthAttachment};
-use crate::resources::{Buffers, FrameSync,
-                        create_uniform_buffers, create_command_buffers,  destroy_buffers};
+use crate::resources::{GeometryBuffer, UniformBuffers, FrameSync,
+                        create_uniform_buffers, create_command_buffers};
 use crate::scene::{Camera, CameraBuilder, CurrentFrame, ECSContext, InstanceBuffer, LightBuffer, ModelRegistry, ModelsStorage, SkinningBuffer, Time};
 use crate::math::{Vec3, Vec4};
 
@@ -314,14 +314,21 @@ impl App {
 		)?;
 
         // 10. buffers
-        let buffers_data = Buffers::new(
+        let geometry_buffer = GeometryBuffer::new(
             &instance,
             &device,
             device_data.physical_device,
             &models,
             command_data.setup_command_buffer,
             device_data.graphics_queue,
-            swapchain_data.vk_images.len(),
+            // swapchain_data.vk_images.len(),
+        )?;
+
+        let uniform_buffers = UniformBuffers::new(
+            &instance,
+            &device,
+            device_data.physical_device,
+            swapchain_data.vk_images.len()
         )?;
 
 		// 11. lights
@@ -333,7 +340,7 @@ impl App {
             &device,
             &ecs_context,
             &descriptor_layout_data,
-            &buffers_data.uniform_buffers,
+            &uniform_buffers.vk_buffers,
             &textures,
             &default_texture,
             &models,
@@ -371,7 +378,8 @@ impl App {
             swapchain_data,
             descriptor_layout_data,
             pipeline_data,
-            buffers_data,
+            geometry_buffer,
+            uniform_buffers,
             descriptor_data,
             command_data,
             sync_data,
@@ -425,7 +433,7 @@ impl App {
         self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
         self.data.descriptor_layout_data.destroy(&self.device);
         self.data.sync_data.destroy(&self.device);
-        destroy_buffers(&self.device, &[self.data.buffers_data.interleaved_buffer], &[self.data.buffers_data.interleaved_buffer_memory]);
+        self.data.geometry_buffer.destroy(&self.device);
         self.data.command_data.destroy(&self.device);
 
         // Destroy App
@@ -442,13 +450,8 @@ impl App {
     #[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn destroy_swapchain(&mut self) {
-        // self.device.destroy_descriptor_pool(self.data.descriptor_data.descriptor_pool, None);
-        destroy_buffers(
-            &self.device,
-            &self.data.buffers_data.uniform_buffers,
-            &self.data.buffers_data.uniform_buffers_memory
-        );
-
+        self.data.uniform_buffers.destroy(&self.device);
+        
         self.data.depth_data.destroy(&self.device);
 		self.data.color_data.destroy(&self.device);
         self.data.pipeline_data.destroy(&self.device);
@@ -509,7 +512,7 @@ impl App {
             ],
         )?;
 
-        (self.data.buffers_data.uniform_buffers, self.data.buffers_data.uniform_buffers_memory) = create_uniform_buffers(
+        (self.data.uniform_buffers.vk_buffers, self.data.uniform_buffers.vk_buffers_memories) = create_uniform_buffers(
             &self.instance,
             &self.device,
             self.data.device_data.physical_device,
@@ -518,7 +521,7 @@ impl App {
 
         self.data.descriptor_data.update_global_descriptor_sets(
             &self.device,
-            &self.data.buffers_data.uniform_buffers
+            &self.data.uniform_buffers.vk_buffers
         );
 
         (self.data.command_data.primary_command_buffers, self.data.command_data.secondary_command_buffers) = create_command_buffers(
@@ -565,7 +568,7 @@ impl App {
             &self.device,
 			&mut self.ecs_context,
             &self.data.pipeline_data,
-            &self.data.buffers_data,
+            &self.data.geometry_buffer,
             &self.data.swapchain_data,
             &self.data.color_data,
             &self.data.depth_data,
@@ -642,7 +645,7 @@ impl App {
 
         unsafe {
             let memory = self.device.map_memory(
-                self.data.buffers_data.uniform_buffers_memory[image_index],
+                self.data.uniform_buffers.vk_buffers_memories[image_index],
                 0,
                 size_of::<UniformBufferObject>() as u64,
                 vk::MemoryMapFlags::empty()
@@ -650,7 +653,7 @@ impl App {
 
 
             memcpy(&ubo, memory.cast(), 1);
-            self.device.unmap_memory(self.data.buffers_data.uniform_buffers_memory[image_index]);
+            self.device.unmap_memory(self.data.uniform_buffers.vk_buffers_memories[image_index]);
         }
 
         Ok(())
@@ -676,7 +679,8 @@ pub struct AppData {
     // Textures
 	pub textures_data: TexturesStorage,
     // Buffers
-    pub buffers_data: Buffers,
+    pub geometry_buffer: GeometryBuffer,
+    pub uniform_buffers: UniformBuffers,
     // Descriptor
     pub descriptor_data: Descriptors,
     // Command Buffers

@@ -27,7 +27,7 @@ use crate::gpu::{
 	Pipeline
 };
 use crate::resources::{
-	Buffers,
+	GeometryBuffer,
 	create_command_pool,
 	create_command_pools,
 	create_setup_command_buffer,
@@ -116,6 +116,7 @@ pub struct CommandRecorder {
     pub secondary_command_buffers:	Vec<vk::CommandBuffer>,
     pub setup_command_buffer:		vk::CommandBuffer,
 
+    // Kept as fields and cleared rather than reallocated, so steady-state recording performs no heap allocation
     draw_list:			Vec<DrawItem>,
     instance_data:		Vec<InstanceData>,
     sorted_entities:	Vec<EntityInstance>,
@@ -153,12 +154,35 @@ impl CommandRecorder {
 		device.destroy_command_pool(self.setup_pool, None);
 	}
 
+    /// Records the primary command buffer for one frame.
+    ///
+    /// Resets the frame pool, opens a dynamic rendering pass targeting the given
+    /// attachments, executes the secondary buffer produced by
+    /// [record_secondary_command_buffer], and inserts the layout transitions the
+    /// swapchain image needs before rendering and before presentation.
+    ///
+    /// The recorded buffer is stored in `command_buffers[image_index]` and submitted
+    /// by the caller.
+    ///
+    /// ## Arguments
+    ///
+    /// - `device` ( &[Device] ) - The Vulkan device.
+    /// - `ecs_context` ( &mut [ECSContext] ) - Scene to draw. Queried for renderable entities and for the [ModelsStorage] and [InstanceBuffer] resources.
+    /// - `graphic_pipeline` ( &[Pipeline] ) - Pipeline and layout bound for every draw of the frame.
+    /// - `buffers` ( &[Buffers] ) - Shared geometry buffer, mesh offsets and the uniform buffer of this image.
+    /// - `swapchain` ( &[Swapchain] ) - Provides the render extent, the color format and the image view resolved into.
+    /// - `color_attachment` ( &[ColorAttachment] ) - Multisampled color target, resolved into the swapchain image.
+    /// - `depth_attachment` ( &[DepthAttachment] ) - Depth target and its format.
+    /// - `descriptors` ( &[Descriptors] ) - Descriptor sets bound during recording.
+    /// - `msaa_samples` ( [vk::SampleCountFlags] ) - Sample count, which must match the one the pipeline was created with.
+    /// - `image_index` ( `usize` ) - Swapchain image being rendered into, selecting the pool and buffers to use.
+    /// - `frame_index` ( `usize` ) - Frame in flight, selecting which region of the skinning and instance buffers to read.
 	pub fn record(
 		&mut self,
         device:				&Device,
         ecs_context:		&mut ECSContext,
         graphic_pipeline:	&Pipeline,
-        buffers:			&Buffers,
+        geometry_buffer:	&GeometryBuffer,
         swapchain:			&Swapchain,
         color_attachment:	&ColorAttachment,
         depth_attachment:	&DepthAttachment,
@@ -232,7 +256,7 @@ impl CommandRecorder {
             device,
             ecs_context,
             graphic_pipeline,
-            buffers,
+            geometry_buffer,
             &[swapchain.vk_format],
             depth_attachment,
             descriptors,
@@ -263,7 +287,7 @@ impl CommandRecorder {
         device:				&Device,
         ecs_context:		&mut ECSContext,
         graphic_pipeline:	&Pipeline,
-        buffers:			&Buffers,
+        geometry_buffer:	&GeometryBuffer,
         swapchain_formats:	&[vk::Format],
         depth_attachment:	&DepthAttachment,
         descriptors:		&Descriptors,
@@ -271,7 +295,6 @@ impl CommandRecorder {
         image_index:		usize,
         frame_index:		usize
     ) -> Result<vk::CommandBuffer> {
-		// TODO: instance_data, draw_list and sorted_entities should be define inside record_secondary_command_buffer not inside the struct CommandData
         self.instance_data.clear();
         self.draw_list.clear();
 		self.sorted_entities.clear();
@@ -327,9 +350,7 @@ impl CommandRecorder {
 
 				let node_id = NodeId(i);
 				let node_matrix = model.get_global_matrix_of(node_id);
-				let mesh_offset = *buffers.mesh_offsets
-					.get(&(*model_id, node_id))
-					.unwrap_or_else(|| panic!("no mesh offset for ({:?}, {:?})", model_id, node_id));
+				let mesh_offset = geometry_buffer.get_mesh_offset(*model_id, node_id);
 
 				for primitive in &mesh.primitives {
 					self.draw_list.push(DrawItem {
@@ -376,8 +397,8 @@ impl CommandRecorder {
             device.begin_command_buffer(command_buffer, &info)?;
 
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, graphic_pipeline.vk_pipeline);
-            device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffers.interleaved_buffer], &[0]);
-            device.cmd_bind_index_buffer(command_buffer, buffers.interleaved_buffer, buffers.interleaved_offset, vk::IndexType::UINT32);
+            device.cmd_bind_vertex_buffers(command_buffer, 0, &[geometry_buffer.vk_buffer], &[0]);
+            device.cmd_bind_index_buffer(command_buffer, geometry_buffer.vk_buffer, geometry_buffer.interleaved_offset, vk::IndexType::UINT32);
         
             device.cmd_bind_descriptor_sets(
                 command_buffer,
