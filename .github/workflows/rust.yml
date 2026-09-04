@@ -30,10 +30,13 @@ jobs:
         sudo apt-get install -y libvulkan1 vulkan-tools libvulkan-dev vulkan-validationlayers-dev spirv-tools
     
     - name: Build
+      working-directory: vulkan-engine
       run: cargo build --verbose
 
     - name: Clippy
+      working-directory: vulkan-engine
       run: cargo clippy --all-targets -- -D warnings
       
     - name: Run tests
+      working-directory: vulkan-engine
       run: cargo test --verbose
