@@ -38,19 +38,15 @@ use crate::type_safety::{
 /// sets are rebound less often. They are created once and outlive swapchain
 /// recreation, unlike the sets allocated from them.
 /// 
-/// ## Fields
+/// ## Field
 /// 
-/// - `global_set_layout` ( [vk::DescriptorSetLayout] ) - **Set 0**. Camera and PBR uniforms (binding 0) plus the light SSBO (binding 1). Bound once per frame.
-/// - `material_set_layout` ( [vk::DescriptorSetLayout] ) - **Set 1**. The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive. Rebound whenever the material changes.
-/// - `skin_set_layout` ( [vk::DescriptorSetLayout] ) - **Set 2**. Joint matrix SSBO shared by every skinned instance. Bound once per frame.
-/// - `instance_set_layout` ( [vk::DescriptorSetLayout] ) - **Set 3**. Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
+/// [[vk::DescriptorSetLayout]; 4]:
+/// - **Set 0**. Camera and PBR uniforms (binding 0) plus the light SSBO (binding 1). Bound once per frame.
+/// - **Set 1**. The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive. Rebound whenever the material changes.
+/// - **Set 2**. Joint matrix SSBO shared by every skinned instance. Bound once per frame.
+/// - **Set 3**. Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
 #[derive(Debug)]
-pub struct DescriptorLayouts {
-	pub global_set_layout:		vk::DescriptorSetLayout,
-    pub material_set_layout:	vk::DescriptorSetLayout,
-    pub skin_set_layout:		vk::DescriptorSetLayout,
-    pub instance_set_layout:	vk::DescriptorSetLayout,
-}
+pub struct DescriptorLayouts([vk::DescriptorSetLayout; 4]);
 
 impl DescriptorLayouts {
 	pub fn new(device: &Device) -> Result<Self> {
@@ -59,16 +55,27 @@ impl DescriptorLayouts {
         let skin_set_layout = create_storage_descriptor_set_layout(device)?;
         let instance_set_layout = create_storage_descriptor_set_layout(device)?;
 
-		Ok(Self { global_set_layout, material_set_layout, skin_set_layout, instance_set_layout })
+		Ok(Self([global_set_layout, material_set_layout, skin_set_layout, instance_set_layout]))
 	}
+
+	/// `global_set_layout` (**Set 0**). Camera and PBR uniforms (binding 0) plus the light SSBO (binding 1). Bound once per frame.
+    #[inline] pub fn global(&self)		-> vk::DescriptorSetLayout { self.0[0] }
+	/// `material_set_layout` (**Set 1**). The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive. Rebound whenever the material changes.
+    #[inline] pub fn material(&self)	-> vk::DescriptorSetLayout { self.0[1] }
+	/// `skin_set_layout` (**Set 2**). Joint matrix SSBO shared by every skinned instance. Bound once per frame.
+    #[inline] pub fn skin(&self)		-> vk::DescriptorSetLayout { self.0[2] }
+	/// `instance_set_layout` (**Set 3**). Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
+    #[inline] pub fn instance(&self)	-> vk::DescriptorSetLayout { self.0[3] }
+
+	#[inline] pub fn as_slice(&self) -> &[vk::DescriptorSetLayout] { &self.0 }
 
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        device.destroy_descriptor_set_layout(self.global_set_layout, None);
-        device.destroy_descriptor_set_layout(self.material_set_layout, None);
-        device.destroy_descriptor_set_layout(self.skin_set_layout, None);
-        device.destroy_descriptor_set_layout(self.instance_set_layout, None);
+    pub unsafe fn destroy(&self, device: &Device) {
+        device.destroy_descriptor_set_layout(self.global(), None);
+        device.destroy_descriptor_set_layout(self.material(), None);
+        device.destroy_descriptor_set_layout(self.skin(), None);
+        device.destroy_descriptor_set_layout(self.instance(), None);
     }
 }
 // endregion
@@ -102,7 +109,7 @@ impl Descriptors {
 	pub fn  new(
         device:						&Device,
         ecs_context:				&ECSContext,
-        descriptor_layout_data:		&DescriptorLayouts,
+        descriptor_layouts:			&DescriptorLayouts,
         uniform_buffers:			&[vk::Buffer],
         textures:					&TexturesStorage,
         default_texture:			&TextureData,
@@ -130,7 +137,7 @@ impl Descriptors {
         let global_descriptor_sets = create_global_descriptor_sets(
             device,
             images_count,
-            descriptor_layout_data.global_set_layout,
+            descriptor_layouts.global(),
             descriptor_pool,
             uniform_buffers,
             light_buffer,
@@ -138,7 +145,7 @@ impl Descriptors {
 
         let material_descriptor_sets = create_material_descriptor_sets(
             device,
-            descriptor_layout_data.material_set_layout,
+            descriptor_layouts.material(),
             descriptor_pool,
             &materials,
             textures,
@@ -147,14 +154,14 @@ impl Descriptors {
 
 		let skinning_descriptor_set = create_storage_descriptor_set(
 			device,
-			descriptor_layout_data.skin_set_layout,
+			descriptor_layouts.skin(),
 			descriptor_pool,
 			skinning_buffer.storage()
 		)?;
 
 		let instance_descriptor_set = create_storage_descriptor_set(
 			device,
-			descriptor_layout_data.instance_set_layout,
+			descriptor_layouts.instance(),
 			descriptor_pool,
 			instance_buffer.storage()
 		)?;

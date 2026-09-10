@@ -1,7 +1,8 @@
 use std::mem::offset_of;
 
 use crate::math::*;
-use crate::scene::Material;
+use crate::scene::{Material, Camera};
+use crate::constants::CORRECTION;
 
 /// Contained instance object data
 /// 
@@ -43,6 +44,37 @@ pub struct UniformBufferObject {
     pub gamma: f32,
     pub prefiltered_cube_mip_levels: f32,
     pub scale_ibl_ambient: f32,
+}
+
+impl UniformBufferObject {
+    // TODO: pass all raw argument into a struct RenderParams
+    pub fn from_camera(
+        camera: &Camera,
+        aspect_ratio: f32
+    ) -> Self {
+        let view = camera.get_view_matrix();
+
+        let proj = CORRECTION * camera.get_projection_matrix(
+            aspect_ratio,
+            Some(0.1),
+            Some(1000.0)
+        );
+
+        let cam_pos = {
+            let pos = camera.get_position();
+            Vec4::new(pos.x, pos.y, pos.z, 1.0)
+        };
+
+        UniformBufferObject {
+            view,
+            proj,
+            cam_pos,
+            exposure: 4.5,
+            gamma: 2.2,
+            prefiltered_cube_mip_levels: 1.0,
+            scale_ibl_ambient: 1.0
+        }
+    }
 }
 
 #[repr(C)]

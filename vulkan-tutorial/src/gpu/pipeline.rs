@@ -16,7 +16,6 @@ impl Pipeline {
     pub fn new(
         device:					&Device,
         shaders:				&[(&[u8], vk::ShaderStageFlags)],
-        swapchain_extent:		vk::Extent2D,
         swapchain_format:		vk::Format,
         depth_format:			vk::Format,
         msaa_samples:			vk::SampleCountFlags,
@@ -38,24 +37,29 @@ impl Pipeline {
 			.primitive_restart_enable(false);
 
 
-		// Viewport State
-		let viewport = vk::Viewport::builder()
-			.x(0.0)
-			.y(0.0)
-			.width(swapchain_extent.width as f32)
-			.height(swapchain_extent.height as f32)
-			.min_depth(0.0)
-			.max_depth(1.0);
+		// Dynamic Viewport State
+		// let viewport = vk::Viewport::builder()
+		// 	.x(0.0)
+		// 	.y(0.0)
+		// 	.width(swapchain_extent.width as f32)
+		// 	.height(swapchain_extent.height as f32)
+		// 	.min_depth(0.0)
+		// 	.max_depth(1.0);
 
-		let scissor = vk::Rect2D::builder()
-			.offset(vk::Offset2D { x: 0, y: 0 })
-			.extent(swapchain_extent);
+		// let scissor = vk::Rect2D::builder()
+		// 	.offset(vk::Offset2D { x: 0, y: 0 })
+		// 	.extent(swapchain_extent);
 
-		let viewports = &[viewport];
-		let scissors = &[scissor];
 		let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-			.viewports(viewports)
-			.scissors(scissors);
+			.viewport_count(1)
+			.scissor_count(1);
+
+		let dynamic_states = &[
+			vk::DynamicState::VIEWPORT,
+			vk::DynamicState::SCISSOR,
+		];
+		let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
+    		.dynamic_states(dynamic_states);
 
 		// Rasterization State
 		let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
@@ -140,6 +144,7 @@ impl Pipeline {
 			.multisample_state(&multisample_state)
 			.depth_stencil_state(&depth_stencil_state)
 			.color_blend_state(&color_blend_state)
+			.dynamic_state(&dynamic_state)
 			.layout(vk_layout)
 			.push_next(&mut pipeline_rendering_info);
 

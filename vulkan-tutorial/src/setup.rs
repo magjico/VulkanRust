@@ -192,7 +192,7 @@ pub fn create_default_texture(
     })
 }
 
-pub fn create_default_lightning(
+pub fn create_default_lighting(
     instance: &Instance,
     device: &Device,
     physical_device: vk::PhysicalDevice

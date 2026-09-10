@@ -9,6 +9,8 @@ use crate::constants::{VALIDATION_ENABLED, VALIDATION_LAYER, DEVICE_EXTENSIONS};
 // GPU-Context (regroup all device struct into one for the app management)
 //=======================================================
 
+// TODO: maybe transform GPURequirements and GPUContext into a builder architecture object.
+
 /// Store the wanted [vk::PhysicalDevice] features/extensions/parameters to implements.
 #[derive(Debug)]
 pub struct GPURequirements {

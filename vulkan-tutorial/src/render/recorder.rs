@@ -125,11 +125,11 @@ pub struct CommandRecorder {
 impl CommandRecorder {
 	pub fn new(
 		device: &Device,
-		queue_family_indices: &mut QueueFamilyIndices,
-		swapchain_images: &[vk::Image],
+		queue_family_indices: &QueueFamilyIndices,
+		swapchain_images_count: usize,
 	) -> Result<Self> {
 		let setup_pool = create_command_pool(device, queue_family_indices)?;
-		let frames_pools = create_command_pools(device, queue_family_indices, swapchain_images.len())?;
+		let frames_pools = create_command_pools(device, queue_family_indices, swapchain_images_count)?;
 		let setup_command_buffer = create_setup_command_buffer(device, setup_pool)?;
 		let (primary_command_buffers, secondary_command_buffers) = create_command_buffers(device, &frames_pools)?;
 
@@ -148,7 +148,7 @@ impl CommandRecorder {
 
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
+    pub unsafe fn destroy(&self, device: &Device) {
 		self.frames_pools.iter().for_each(|c| device.destroy_command_pool(*c, None));
 		device.free_command_buffers(self.setup_pool, &[self.setup_command_buffer]);
 		device.destroy_command_pool(self.setup_pool, None);
@@ -157,9 +157,7 @@ impl CommandRecorder {
     /// Records the primary command buffer for one frame.
     ///
     /// Resets the frame pool, opens a dynamic rendering pass targeting the given
-    /// attachments, executes the secondary buffer produced by
-    /// [record_secondary_command_buffer], and inserts the layout transitions the
-    /// swapchain image needs before rendering and before presentation.
+    /// attachments.
     ///
     /// The recorded buffer is stored in `command_buffers[image_index]` and submitted
     /// by the caller.
@@ -261,6 +259,7 @@ impl CommandRecorder {
             depth_attachment,
             descriptors,
             msaa_samples,
+            swapchain.vk_extent,
             image_index,
             frame_index
         )?;
@@ -292,6 +291,7 @@ impl CommandRecorder {
         depth_attachment:	&DepthAttachment,
         descriptors:		&Descriptors,
         msaa_samples:		vk::SampleCountFlags,
+        swapchain_extent:   vk::Extent2D,
         image_index:		usize,
         frame_index:		usize
     ) -> Result<vk::CommandBuffer> {
@@ -299,9 +299,8 @@ impl CommandRecorder {
         self.draw_list.clear();
 		self.sorted_entities.clear();
 
-		let models = ecs_context.world.get_resource::<ModelsStorage>()
+        let models = ecs_context.world.get_resource::<ModelsStorage>()
             .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
-
 		// Step 1 - Draw Sorting
 		// 1.a - gather entities, sorted by model
 		self.sorted_entities.extend(
@@ -395,6 +394,21 @@ impl CommandRecorder {
 
         unsafe {
             device.begin_command_buffer(command_buffer, &info)?;
+
+            let viewport = vk::Viewport::builder()
+                .x(0.0)
+                .y(0.0)
+                .width(swapchain_extent.width as f32)
+                .height(swapchain_extent.height as f32)
+                .min_depth(0.0)
+                .max_depth(1.0);
+
+            let scissor = vk::Rect2D::builder()
+                .offset(vk::Offset2D { x: 0, y: 0 })
+                .extent(swapchain_extent);
+
+            device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+            device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
             device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, graphic_pipeline.vk_pipeline);
             device.cmd_bind_vertex_buffers(command_buffer, 0, &[geometry_buffer.vk_buffer], &[0]);
@@ -554,5 +568,39 @@ impl CommandRecorder {
             .image_memory_barriers(&barriers);
 
         unsafe { device.cmd_pipeline_barrier2_khr(command_buffer, &dependency_info) };
+    }
+
+    /// Rebuilds the per-frame command pools and buffers for a new swapchain image count.
+    ///
+    /// Only needed when a swapchain recreation changes the number of images, since the
+    /// pools and buffers are otherwise reset and reused every frame. Destroying the old
+    /// pools implicitly frees the command buffers allocated from them.
+    ///
+    /// ## Arguments
+    ///
+    /// - `device` ( &[Device] ) - The Vulkan device.
+    /// - `queue_family_indices` ( &[QueueFamilyIndices] ) - Source of the graphics family index the new pools are created on.
+    /// - `swapchain_images_count` ( `usize` ) - New image count, and therefore the number of pools and buffers to allocate.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must have waited on device idle: the pools being destroyed may still
+    /// hold buffers submitted to the queue.
+    pub fn resize_frame_resources(
+        &mut self,
+        device: &Device,
+        queue_family_indices: &QueueFamilyIndices,
+        swapchain_images_count: usize
+    ) -> Result<()> {
+        unsafe {
+            self.frames_pools.iter().for_each(|pool| device.destroy_command_pool(*pool, None));
+        }
+
+        self.frames_pools = create_command_pools(device, queue_family_indices, swapchain_images_count)?;
+        let (primary, secondary) = create_command_buffers(device, &self.frames_pools)?;
+        self.primary_command_buffers = primary;
+        self.secondary_command_buffers = secondary;
+
+        Ok(())
     }
 }

@@ -422,7 +422,7 @@ impl UniformBuffers {
 		instance:			&Instance,
 		device:				&Device,
 		physical_device:	vk::PhysicalDevice,
-		images_count:	usize,
+		images_count:		usize,
 	) -> Result<Self> {
 		let (vk_buffers, vk_buffers_memories) = create_uniform_buffers(
             instance,
@@ -442,4 +442,24 @@ impl UniformBuffers {
 	pub unsafe fn destroy(&self, device: &Device) {
 		destroy_buffers(device, &self.vk_buffers, &self.vk_buffers_memories);
 	}
+
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn write(
+        &self,
+        device:			&Device,
+        image_index:	usize,
+        ubo:			&UniformBufferObject,
+    ) -> Result<()> {
+        let memory = device.map_memory(
+            self.vk_buffers_memories[image_index],
+            0,
+            size_of::<UniformBufferObject>() as u64,
+            vk::MemoryMapFlags::empty()
+        )?;
+
+        memcpy(ubo, memory.cast(), 1);
+        device.unmap_memory(self.vk_buffers_memories[image_index]);
+
+        Ok(())
+    }
 }

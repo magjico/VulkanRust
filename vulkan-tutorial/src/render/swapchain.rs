@@ -131,7 +131,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 //========================================
 // Swapchain Support
 //========================================
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SwapchainSupport {
     pub capabilities: vk::SurfaceCapabilitiesKHR,
     pub formats: Vec<vk::SurfaceFormatKHR>,
