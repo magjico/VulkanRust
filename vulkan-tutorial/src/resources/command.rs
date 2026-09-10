@@ -17,10 +17,10 @@ use crate::gpu::QueueFamilyIndices;
 /// - `queue_family_indices` ( &mut [QueueFamilyIndices] ).
 pub fn create_command_pool(
     device: &Device,
-    queue_family_indices: &mut QueueFamilyIndices,
+    queue_family_indices: &QueueFamilyIndices,
 ) -> Result<vk::CommandPool> {
     let info = vk::CommandPoolCreateInfo::builder()
-        .queue_family_index(queue_family_indices.get(vk::QueueFlags::GRAPHICS)?)
+        .queue_family_index(queue_family_indices.get2(vk::QueueFlags::GRAPHICS)?)
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
     Ok(unsafe { device.create_command_pool(&info, None)? }) 
@@ -29,7 +29,7 @@ pub fn create_command_pool(
 /// Use [create_command_pool] to generate `count` command pool in a Vec.
 pub fn create_command_pools(
     device: &Device,
-    queue_family_indices: &mut QueueFamilyIndices,
+    queue_family_indices: &QueueFamilyIndices,
     count: usize,
 ) -> Result<Vec<vk::CommandPool>> {
     let command_pools = (0..count)

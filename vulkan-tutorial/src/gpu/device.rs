@@ -445,7 +445,7 @@ pub fn create_logical_device(
 /// - `properties` ( Vec<[vk::QueueFamilyProperties]> ) - All Queue properties for a specific physical device pass in [QueueFamilyIndices::create].
 /// - `indices` ( HashMap<[vk::QueueFlags], u32> ) - Hashmap which associate a QueueFlags with a corresponding Queue Family (that implement the flags properties) index if it exist.
 /// - `present` ( u32 ) - Present queue index.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct QueueFamilyIndices {
     properties: Vec<vk::QueueFamilyProperties>,
     indices: HashMap<vk::QueueFlags, u32>,
@@ -522,6 +522,27 @@ impl QueueFamilyIndices {
             }
         }
     } 
+
+    pub fn get2(&self, queue_flags: vk::QueueFlags) -> Result<u32> {
+        let mut exact    = None;
+        let mut fallback = None;
+
+        for (i, p) in self.properties.iter().enumerate() {
+            if p.queue_count == 0 { continue; }
+
+            if p.queue_flags == queue_flags {
+                exact = Some(i as u32);
+                break;
+            }
+
+            if fallback.is_none() && p.queue_flags.contains(queue_flags) {
+                fallback = Some(i as u32);
+            }
+        }
+
+        exact.or(fallback)
+            .ok_or_else(|| anyhow!(SuitabilityError("Missing required queue families.")))
+    }
 
     pub fn test_for(
         instance: &Instance,

@@ -13,13 +13,13 @@ use crate::resources::create_buffer;
 /// - `position` ( [Vec4] ) - xyz = position, w = radius.
 /// - `color` ( [Vec4] ) - rgb = color, w = intensity.
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Light {
 	pub position: Vec4,
 	pub color: Vec4
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LightBuffer {
 	pub buffer:		vk::Buffer,
 	pub memory:		vk::DeviceMemory,

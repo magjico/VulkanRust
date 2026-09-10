@@ -60,7 +60,7 @@ impl FrameSync {
 
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
+    pub unsafe fn destroy(&self, device: &Device) {
         self.in_flight_fences.iter().for_each(|f| device.destroy_fence(*f, None)); // also free images_in_flight
         self.render_finished_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));
         self.image_available_semaphores.iter().for_each(|s| device.destroy_semaphore(*s, None));

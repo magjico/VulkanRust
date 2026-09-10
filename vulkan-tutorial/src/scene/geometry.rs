@@ -6,7 +6,7 @@ use crate::math::*;
 use crate::type_safety::{MaterialId, TextureId};
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Vertex {
     pub pos: Vec3,
     pub normal: Vec3,
@@ -150,7 +150,7 @@ impl Hash for Vertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Material {
     pub base_color_factor:	Vec4,
     pub metallic_factor:	f32,
@@ -213,7 +213,7 @@ impl Material {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Primitive {
     pub first_index: u32,
     pub index_count: u32,

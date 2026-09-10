@@ -14,7 +14,7 @@ pub struct Time(pub f32);
 #[derive(Resource)]
 pub struct SSBOSkiningAllocator(pub SlotAllocator);
 
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Debug)]
 pub struct ModelsStorage {
 	models: Vec<ModelGraph>,
 	material_offsets: Vec<MaterialId>,

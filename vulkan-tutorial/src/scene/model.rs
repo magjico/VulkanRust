@@ -13,7 +13,7 @@ use super::{Mesh, Animation, Material, PathType};
 
 // region Model-Graph
 /// Describe a type of model node transformation for animation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub enum NodeTransform {
     Trs { translation: Vec3, rotation: Quat, scale: Vec3 },
     Matrix(Mat4),
@@ -107,7 +107,7 @@ impl NodeTransform {
 
 /// Structure that hold the data of a model-node in a scenegraph
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ModelNodeData {
     pub name: String,
     pub mesh: Option<Mesh>,
@@ -164,14 +164,14 @@ impl Node<ModelNodeData> {
 /// - `inverse_bind_mats` ( __Vec<[Mat4]>__ ) - Transforms the geometry into the space of the respective joint.
 /// - `joints` ( __Vec<[NodeId]>__ ) - Contains the nodes used as joints in this skin.
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Skin {
     pub name: String,
     pub skeleton_root: Option<NodeId>,
     pub inverse_bind_mats: Vec<Mat4>,
     pub joints: Vec<NodeId>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ModelGraph {
 	pub graph:		FlatGraph<ModelNodeData>,
     pub roots:		Vec<NodeId>,

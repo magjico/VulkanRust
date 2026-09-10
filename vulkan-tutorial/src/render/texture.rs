@@ -14,7 +14,7 @@ use crate::ops::copy_buffer_to_image;
 use crate::type_safety::TextureId;
 
 /// only use to store texture data (for now).
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TextureData {
     pub image: vk::Image,
     pub image_memory: vk::DeviceMemory,
@@ -25,7 +25,7 @@ pub struct TextureData {
 
 impl TextureData {
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
+    pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_sampler(self.sampler, None);
         device.destroy_image_view(self.image_view, None);
         device.destroy_image(self.image, None);
@@ -33,7 +33,7 @@ impl TextureData {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TexturesStorage(pub Vec<TextureData>);
 
 impl TexturesStorage {
@@ -84,8 +84,8 @@ impl TexturesStorage {
 
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        self.iter_mut().for_each(|texture_data| texture_data.destroy(device));
+    pub unsafe fn destroy(&self, device: &Device) {
+        self.iter().for_each(|texture_data| texture_data.destroy(device));
     }
 }
 
