@@ -27,7 +27,7 @@ jobs:
     - name: Install Vulkan SDK (loader + validation layers)
       run: |
         sudo apt-get update
-        sudo apt-get install -y libvulkan1 vulkan-tools libvulkan-dev vulkan-validationlayers-dev spirv-tools
+        sudo apt-get install -y libvulkan1 vulkan-tools libvulkan-dev vulkan-validationlayers spirv-too glslcls
     
     - name: Build
       run: cargo build --verbose
