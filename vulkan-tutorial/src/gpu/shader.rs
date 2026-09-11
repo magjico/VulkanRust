@@ -2,10 +2,7 @@ use anyhow::Result;
 
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
-
-use crate::scene::Vertex;
-use crate::render::PushConstants;
-
+// TODO: check refactor
 //===========================================
 // Descriptor Set
 //===========================================
@@ -22,31 +19,13 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
         .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
 
     // Light binding
-    let light_binding = vk::DescriptorSetLayoutBinding::builder()
+    let light_binding: vk::DescriptorSetLayoutBindingBuilder<'_> = vk::DescriptorSetLayoutBinding::builder()
         .binding(1)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
     let bindings = &[ubo_binding, light_binding];
-    let info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(bindings);
-
-    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
-
-    Ok(descriptor_set_layout)
-}
-
-/// create a unique descriptor set layout for **all skins**.
-pub fn create_skinning_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
-    // Animation joint binding
-    let binding = vk::DescriptorSetLayoutBinding::builder()
-        .binding(0)
-        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::VERTEX);
-
-    let bindings = &[binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 
@@ -75,8 +54,8 @@ pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::Desc
     Ok(descriptor_set_layout)
 }
 
-/// create a unique descriptor set layout for all model instances
-pub fn create_instance_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+/// create a unique descriptor set layout for storage type descriptor set
+pub fn create_storage_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
     let binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -103,161 +82,56 @@ fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::ShaderMo
     Ok( unsafe { device.create_shader_module(&info, None)? })
 }
 
-pub fn create_pipeline(
-    device: &Device,
-    vert: &[u8],
-    frag: &[u8],
-    swapchain_extent: vk::Extent2D,
-    swapchain_format: vk::Format,
-    depth_format: vk::Format,
-    msaa_samples: vk::SampleCountFlags,
-    global_set_layout: vk::DescriptorSetLayout,
-    material_set_layout: vk::DescriptorSetLayout,
-    skin_set_layout: vk::DescriptorSetLayout,
-    instance_set_layout: vk::DescriptorSetLayout,
-) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
-    // Stages
-    let vert_shader_module = create_shader_module(device, &vert[..])?;
-    let frag_shader_module = create_shader_module(device, &frag[..])?;
+pub struct ShaderStagesBuilder {
+    modules: Vec<vk::ShaderModule>,
+    stages: Vec<vk::ShaderStageFlags>,
+}
 
-    let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
-        .stage(vk::ShaderStageFlags::VERTEX)
-        .module(vert_shader_module)
-        .name(b"main\0");
+impl ShaderStagesBuilder {
+    pub fn new(
+        device: &Device,
+        shaders: &[(&[u8], vk::ShaderStageFlags)],
+    ) -> Result<Self> {
+        let mut modules = Vec::with_capacity(shaders.len());
+        let mut stages = Vec::with_capacity(shaders.len());
 
-    let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
-        .stage(vk::ShaderStageFlags::FRAGMENT)
-        .module(frag_shader_module)
-        .name(b"main\0");
+        for (bytecode, stage) in shaders {
+            modules.push(create_shader_module(device, bytecode)?);
+            stages.push(*stage);
+        }
 
-    // Vertex Input State
-    let binding_descriptions = &[Vertex::binding_description()];
-    let attribute_descriptions = Vertex::attribute_descriptions();
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
-        .vertex_binding_descriptions(binding_descriptions)
-        .vertex_attribute_descriptions(&attribute_descriptions);
-
-    // Input Assembly State
-    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-        .primitive_restart_enable(false);
-
-    // Viewport State
-    let viewport = vk::Viewport::builder()
-        .x(0.0)
-        .y(0.0)
-        .width(swapchain_extent.width as f32)
-        .height(swapchain_extent.height as f32)
-        .min_depth(0.0)
-        .max_depth(1.0);
-
-    let scissor = vk::Rect2D::builder()
-        .offset(vk::Offset2D { x: 0, y: 0 })
-        .extent(swapchain_extent);
-
-    let viewports = &[viewport];
-    let scissors = &[scissor];
-    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-        .viewports(viewports)
-        .scissors(scissors);
-
-    // Rasterization State
-    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
-        .depth_clamp_enable(false)
-        .rasterizer_discard_enable(false)
-        .polygon_mode(vk::PolygonMode::FILL)
-        .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-        .depth_bias_enable(false);
-
-    // Multisample State
-    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
-        .sample_shading_enable(true)
-		// minimum fraction for shading, closer to one is smoother.
-		.min_sample_shading(0.2)
-        .rasterization_samples(msaa_samples);
-
-    // Depth Stencil State
-    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
-        .depth_test_enable(true)
-        .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::LESS)
-        .depth_bounds_test_enable(false)
-        .stencil_test_enable(false);
-
-    // Color Blend State
-    let attachment = vk::PipelineColorBlendAttachmentState::builder()
-        .color_write_mask(vk::ColorComponentFlags::all())
-        .blend_enable(true)
-        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-        .color_blend_op(vk::BlendOp::ADD)
-        .src_alpha_blend_factor(vk::BlendFactor::ONE)
-        .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-        .alpha_blend_op(vk::BlendOp::ADD);
-
-    let attachments = &[attachment];
-    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
-        .logic_op_enable(false)
-        .logic_op(vk::LogicOp::COPY)
-        .attachments(attachments)
-        .blend_constants([0.0, 0.0, 0.0, 0.0]);
-
-    // Constant Push
-    let frag_offset = PushConstants::get_frag_offset();
-    let frag_size = PushConstants::get_frag_size();
-
-    let vert_push_constant_range = vk::PushConstantRange::builder()
-        .stage_flags(vk::ShaderStageFlags::VERTEX)
-        .offset(0)
-        .size(frag_offset);
-
-    let frag_push_constant_range = vk::PushConstantRange::builder()
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        .offset(frag_offset)
-        .size(frag_size);
-
-    // Layout
-    let set_layouts = &[global_set_layout, material_set_layout, skin_set_layout, instance_set_layout];
-    let push_constant_ranges = &[vert_push_constant_range, frag_push_constant_range];
-    let layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .push_constant_ranges(push_constant_ranges)
-        .set_layouts(set_layouts);
-
-    let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
-
-    // dynamic rendering
-    let color_formats = &[swapchain_format];
-
-    let mut pipeline_rendering_info = vk::PipelineRenderingCreateInfoKHR::builder()
-        .color_attachment_formats(color_formats)
-        .depth_attachment_format(depth_format);
-
-    // Create
-    let stages = &[vert_stage, frag_stage];
-    let info = vk::GraphicsPipelineCreateInfo::builder()
-        .stages(stages)
-        .vertex_input_state(&vertex_input_state)
-        .input_assembly_state(&input_assembly_state)
-        .viewport_state(&viewport_state)
-        .rasterization_state(&rasterization_state)
-        .multisample_state(&multisample_state)
-        .depth_stencil_state(&depth_stencil_state)
-        .color_blend_state(&color_blend_state)
-        .layout(pipeline_layout)
-        .push_next(&mut pipeline_rendering_info);
-
-    let pipeline = unsafe { device
-        .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
-        .0[0]
-    };
-
-    // Cleanup
-    unsafe {
-        device.destroy_shader_module(vert_shader_module, None);
-        device.destroy_shader_module(frag_shader_module, None);
+        Ok(Self {
+            modules,
+            stages
+        })
     }
 
-    Ok((pipeline, pipeline_layout))
+    pub fn build(&self) -> Vec<vk::PipelineShaderStageCreateInfoBuilder<'_>> {
+        self.modules.iter()
+            .zip(&self.stages)
+            .map(|(module, stage)| {
+                vk::PipelineShaderStageCreateInfo::builder()
+                    .stage(*stage)
+                    .module(*module)
+                    .name(b"main\0")
+            })
+            .collect()
+    }
+
+    /// ## Safety
+    ///
+    /// The caller must not call this before every pipeline built from these modules
+    /// has been created: `vkCreateGraphicsPipelines` reads the module bytecode at
+    /// creation time.
+    ///
+    /// Once the pipelines exist, the modules can be destroyed immediately — they are
+    /// no longer needed.
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&self, device: &Device) {
+        for module in &self.modules {
+            device.destroy_shader_module(*module, None);
+        }
+    }
+
+
 }

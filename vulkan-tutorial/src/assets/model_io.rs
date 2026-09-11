@@ -175,8 +175,8 @@ pub fn load_3d_content(
         graphics_queue
     )?;
 
-    let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
-    let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
+    let texture_image_view = create_texture_image_view(device, texture_image, mip_levels)?;
+    let texture_sampler = create_texture_sampler(device, mip_levels as f32)?;
 
     let texture = TextureData {
         image: texture_image,
@@ -229,7 +229,7 @@ fn load_ktx2_textures(
         // transcode texture
         let mut transcoder = Transcoder::new();
 
-        if transcoder.prepare_transcoding(&ktx2_data).is_err() {
+        if transcoder.prepare_transcoding(ktx2_data).is_err() {
             return Err(anyhow!("Failed to prepare transcoding: {}", texture_idx));
             // continue 'texture;
         }
@@ -240,7 +240,7 @@ fn load_ktx2_textures(
         for level in 0..mip_levels {
             let params = TranscodeParameters {
                 image_index: 0,
-                level_index: level as u32,
+                level_index: level,
                 decode_flags: None,
                 output_row_pitch_in_blocks_or_pixels: None,
                 output_rows_in_pixels: None,
@@ -248,7 +248,7 @@ fn load_ktx2_textures(
 
             // TODO: support multiple textures format transcoder in case the gpu doesn't support BC7.
             match transcoder.transcode_image_level(
-                &ktx2_data,
+                ktx2_data,
                 TranscoderTextureFormat::BC7_RGBA,
                 params,
             ) {
@@ -264,7 +264,7 @@ fn load_ktx2_textures(
         // no need for transcoding
         let mut all_levels_data = Vec::new();
         for level in ktx_texture.levels() {
-            all_levels_data.extend_from_slice(&level.data);
+            all_levels_data.extend_from_slice(level.data);
         }
         all_levels_data
     };
@@ -275,7 +275,7 @@ fn load_ktx2_textures(
 fn load_rgba_texture(
     raw_data: &[u8],
 ) -> Result<(Vec<u8>, vk::Format, vk::Extent3D, u32)> {
-    let img = image::load_from_memory(&raw_data)?.to_rgba8();
+    let img = image::load_from_memory(raw_data)?.to_rgba8();
     let (w, h) = img.dimensions();
     let extent = vk::Extent3D { width: w, height: h, depth: 1 };
     let mip_levels = (w.max(h) as f32).log2().floor() as u32 + 1;
@@ -356,8 +356,8 @@ fn load_gltf_textures(
             &pixels,
             format,
         )?;
-        let texture_image_view = create_texture_image_view(&device, texture_image, mip_levels)?;
-        let texture_sampler = create_texture_sampler(&device, mip_levels as f32)?;
+        let texture_image_view = create_texture_image_view(device, texture_image, mip_levels)?;
+        let texture_sampler = create_texture_sampler(device, mip_levels as f32)?;
                 
         // vk_textures.push((texture_image, texture_image_memory, texture_image_view, texture_sampler));
         vk_textures.push(TextureData {
@@ -469,23 +469,21 @@ fn load_gltf_animations(
             let start = outputs_access.offset() + outputs_view.offset();
             let output_data = &outputs_buffer[start..start + outputs_access.count() * outputs_access.size()];
 
-            let outputs_vec3;
-            let outputs_vec4;
-            match outputs_access.dimensions() {
-                Dimensions::Vec3 => {
-                    outputs_vec3 = output_data
+            let (outputs_vec3, outputs_vec4) = match outputs_access.dimensions() {
+                Dimensions::Vec3 => (
+                    output_data
                         .chunks(12)
                         .map(|chunk| Vec3::new(
                             f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
                             f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
                             f32::from_le_bytes(chunk[8..12].try_into().unwrap())
                         ))
-                        .collect();
-                    outputs_vec4 = Vec::new();
-                }
-                Dimensions::Vec4 => {
-                    outputs_vec3 = Vec::new();
-                    outputs_vec4 = output_data
+                        .collect(),
+                    Vec::new()
+                ),
+                Dimensions::Vec4 => (
+                    Vec::new(),
+                    output_data
                         .chunks(16)
                         .map(|chunk| Vec4::new(
                             f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
@@ -493,13 +491,10 @@ fn load_gltf_animations(
                             f32::from_le_bytes(chunk[8..12].try_into().unwrap()),
                             f32::from_le_bytes(chunk[12..16].try_into().unwrap())
                         ))
-                        .collect();
-                }
-                _ => {
-                    outputs_vec3 = Vec::new();
-                    outputs_vec4 = Vec::new();
-                }
-            }
+                        .collect()
+                ),
+                _ => (Vec::new(), Vec::new())
+            };
 
             debug!("sampler interp={:?} inputs={} vec3={} vec4={}",
                 interpolation_type,
@@ -640,8 +635,7 @@ pub fn load_gltf_model(
         let skin_index = node.skin().map(|skin| skin.index() as i32).unwrap_or(-1);
         let model_node_data = ModelNodeData {
             name: node.name().unwrap_or("").to_string(),
-            
-            transform: transform,
+            transform,
             skin: skin_index,
 
             ..ModelNodeData::default()

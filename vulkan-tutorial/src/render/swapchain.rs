@@ -10,7 +10,7 @@ use crate::resources::create_image_view;
 use crate::gpu::QueueFamilyIndices;
 
 //========================================
-// Swapchain
+// Swapchain Resources
 //========================================
 
 /// Generate a swapchain and all its related objects.
@@ -131,7 +131,7 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 //========================================
 // Swapchain Support
 //========================================
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SwapchainSupport {
     pub capabilities: vk::SurfaceCapabilitiesKHR,
     pub formats: Vec<vk::SurfaceFormatKHR>,
@@ -145,5 +145,63 @@ impl SwapchainSupport {
             formats: unsafe { instance.get_physical_device_surface_formats_khr(physical_device, surface)? },
             present_modes: unsafe { instance.get_physical_device_surface_present_modes_khr(physical_device, surface)? },
         })
+    }
+}
+
+//========================================
+// Swapchain
+//========================================
+
+#[derive(Debug)]
+pub struct Swapchain {
+	pub vk_format:		vk::Format,
+	pub vk_extent:		vk::Extent2D,
+	pub vk_swapchain:	vk::SwapchainKHR,
+	pub vk_images:		Vec<vk::Image>,
+	pub vk_image_views:	Vec<vk::ImageView>,
+}
+
+impl Swapchain {
+	pub fn new(
+		window:					&Window,
+		instance:				&Instance,
+		device:					&Device,
+		physical_device:		vk::PhysicalDevice,
+		surface:				vk::SurfaceKHR,
+		queue_family_indices:	&mut QueueFamilyIndices,
+	) -> Result<Self> {
+		let (vk_swapchain, vk_format, vk_extent, vk_images) = create_swapchain(
+            window,
+            instance,
+            device,
+            physical_device,
+            surface,
+            queue_family_indices
+        )?;
+
+        let vk_image_views = create_swapchain_image_views(
+            device,
+            &vk_images,
+            vk_format
+        )?;
+
+		Ok(Self {
+			vk_format,
+			vk_extent,
+			vk_swapchain,
+			vk_images,
+			vk_image_views
+		})
+	}
+
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: destroying a swapchain whose images
+    /// are still referenced by a pending submission, or awaiting presentation, is
+    /// undefined behaviour.
+	#[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&self, device: &Device) {
+        self.vk_image_views.iter().for_each(|v| device.destroy_image_view(*v, None));
+        device.destroy_swapchain_khr(self.vk_swapchain, None);
     }
 }

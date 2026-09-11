@@ -41,7 +41,7 @@ pub enum CameraMovement {
 /// - `movement_speed` (`f32`) - Units per second for translation movement.
 /// - `mouse_sensitivity` (`f32`) - Multiplier for mouse input to rotation angle conversion.
 /// - `zoom` (`f32`) - Field of view control for perspective projection.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Camera {
     // Spatial-positioning and orientation
     position: Vec3,

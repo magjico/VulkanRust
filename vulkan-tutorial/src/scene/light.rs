@@ -13,13 +13,13 @@ use crate::resources::create_buffer;
 /// - `position` ( [Vec4] ) - xyz = position, w = radius.
 /// - `color` ( [Vec4] ) - rgb = color, w = intensity.
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Light {
 	pub position: Vec4,
 	pub color: Vec4
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LightBuffer {
 	pub buffer:		vk::Buffer,
 	pub memory:		vk::DeviceMemory,
@@ -65,6 +65,10 @@ impl LightBuffer {
 		Ok(())
 	}
 
+	/// ## Safety
+    ///
+    /// The caller must ensure the device is idle and that no descriptor set still
+    /// referencing this buffer is bound by a pending command buffer.
 	#[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
 		device.destroy_buffer(self.buffer, None);

@@ -5,8 +5,15 @@ use log::*;
 
 use vulkanalia::prelude::v1_0::*;
 
-/// Use to log debug callback from the vulkan API
-pub extern "system" fn debug_callback(
+/// ## Safety
+///
+/// `data` must be a valid, non-null pointer to a [vk::DebugUtilsMessengerCallbackDataEXT]
+/// that stays alive for the duration of the call, with a valid null-terminated string
+/// in its `message` field.
+///
+/// This function is not meant to be called directly — the Vulkan loader invokes it,
+/// and satisfies these requirements.
+pub unsafe extern "system" fn debug_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     type_: vk::DebugUtilsMessageTypeFlagsEXT,
     data: *const vk::DebugUtilsMessengerCallbackDataEXT,

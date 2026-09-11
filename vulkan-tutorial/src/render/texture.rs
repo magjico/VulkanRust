@@ -14,7 +14,7 @@ use crate::ops::copy_buffer_to_image;
 use crate::type_safety::TextureId;
 
 /// only use to store texture data (for now).
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TextureData {
     pub image: vk::Image,
     pub image_memory: vk::DeviceMemory,
@@ -24,8 +24,14 @@ pub struct TextureData {
 }
 
 impl TextureData {
+    /// Destroys the image, its view, its sampler and the backing memory.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle and that no descriptor set still
+    /// referencing this texture is bound by a pending command buffer.
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
+    pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_sampler(self.sampler, None);
         device.destroy_image_view(self.image_view, None);
         device.destroy_image(self.image, None);
@@ -33,13 +39,13 @@ impl TextureData {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Default)]
 pub struct TexturesStorage(pub Vec<TextureData>);
 
 impl TexturesStorage {
     #[inline]
     pub fn new() -> Self {
-        TexturesStorage(Vec::new())
+        Self::default()
     }
 
     #[inline]
@@ -82,10 +88,15 @@ impl TexturesStorage {
         self.0.iter_mut()
     }
 
+    /// Destroys every texture in the storage.
+    ///
+    /// ## Safety
+    ///
+    /// Same safety as [TextureData::destroy], applied to all textures.
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&mut self, device: &Device) {
-        self.iter_mut().for_each(|texture_data| texture_data.destroy(device));
+    pub unsafe fn destroy(&self, device: &Device) {
+        self.iter().for_each(|texture_data| texture_data.destroy(device));
     }
 }
 
@@ -151,7 +162,7 @@ pub fn create_texture_image(
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
-    begin_setup_command_buffer(&device, setup_command_buffer)?;
+    begin_setup_command_buffer(device, setup_command_buffer)?;
 
 	transition_image_layout(
 		device,
@@ -183,7 +194,7 @@ pub fn create_texture_image(
 		mip_levels
 	)?;
 
-    flush_setup_command_buffer(&device, setup_command_buffer, graphics_queue)?;
+    flush_setup_command_buffer(device, setup_command_buffer, graphics_queue)?;
 
     unsafe {
         device.destroy_buffer(staging_buffer, None);

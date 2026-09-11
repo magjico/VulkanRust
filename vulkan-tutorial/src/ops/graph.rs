@@ -7,7 +7,7 @@ use std::mem;
 use crate::type_safety::NodeId;
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node<T> {
 	pub parent: Option<NodeId>,
 	pub childs: Vec<NodeId>,
@@ -18,7 +18,7 @@ pub struct Node<T> {
 
 /// Represent a graph where the Node are stored into a one dimensional array.
 /// You can get information about the nodes themself, their ID (index) and their depths levels.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FlatGraph<T> {
 	nodes: Vec<Node<T>>,
 	depths: Vec<u32>,
@@ -113,6 +113,10 @@ impl<T> FlatGraph<T> {
 	#[inline]
 	pub fn len(&self) -> usize {
 		self.nodes.len()
+	}
+	#[inline]
+	pub fn is_empty(&self) -> bool {
+		self.nodes.is_empty()
 	}
 
 	fn compute_depth(nodes: &[Node<T>], id: NodeId) -> u32 {

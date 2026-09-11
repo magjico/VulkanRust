@@ -6,7 +6,7 @@ use crate::math::*;
 use crate::type_safety::{MaterialId, TextureId};
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Vertex {
     pub pos: Vec3,
     pub normal: Vec3,
@@ -150,7 +150,7 @@ impl Hash for Vertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Material {
     pub base_color_factor:	Vec4,
     pub metallic_factor:	f32,
@@ -213,28 +213,18 @@ impl Material {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Primitive {
     pub first_index: u32,
     pub index_count: u32,
     pub material_id: Option<MaterialId>,
 }
 
+// TODO: mesh builder struct ?
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub primitives: Vec<Primitive>,
-}
-
-// TODO: mesh builder struct ?
-impl Default for Mesh {
-    fn default() -> Self {
-        Self {
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            primitives: Vec::new(),
-        }
-    }
 }
