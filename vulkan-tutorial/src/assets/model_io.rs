@@ -469,23 +469,21 @@ fn load_gltf_animations(
             let start = outputs_access.offset() + outputs_view.offset();
             let output_data = &outputs_buffer[start..start + outputs_access.count() * outputs_access.size()];
 
-            let outputs_vec3;
-            let outputs_vec4;
-            match outputs_access.dimensions() {
-                Dimensions::Vec3 => {
-                    outputs_vec3 = output_data
+            let (outputs_vec3, outputs_vec4) = match outputs_access.dimensions() {
+                Dimensions::Vec3 => (
+                    output_data
                         .chunks(12)
                         .map(|chunk| Vec3::new(
                             f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
                             f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
                             f32::from_le_bytes(chunk[8..12].try_into().unwrap())
                         ))
-                        .collect();
-                    outputs_vec4 = Vec::new();
-                }
-                Dimensions::Vec4 => {
-                    outputs_vec3 = Vec::new();
-                    outputs_vec4 = output_data
+                        .collect(),
+                    Vec::new()
+                ),
+                Dimensions::Vec4 => (
+                    Vec::new(),
+                    output_data
                         .chunks(16)
                         .map(|chunk| Vec4::new(
                             f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
@@ -493,13 +491,10 @@ fn load_gltf_animations(
                             f32::from_le_bytes(chunk[8..12].try_into().unwrap()),
                             f32::from_le_bytes(chunk[12..16].try_into().unwrap())
                         ))
-                        .collect();
-                }
-                _ => {
-                    outputs_vec3 = Vec::new();
-                    outputs_vec4 = Vec::new();
-                }
-            }
+                        .collect()
+                ),
+                _ => (Vec::new(), Vec::new())
+            };
 
             debug!("sampler interp={:?} inputs={} vec3={} vec4={}",
                 interpolation_type,
