@@ -14,7 +14,7 @@ pub struct Time(pub f32);
 #[derive(Resource)]
 pub struct SSBOSkiningAllocator(pub SlotAllocator);
 
-#[derive(Resource, Debug)]
+#[derive(Resource, Debug, Default)]
 pub struct ModelsStorage {
 	models: Vec<ModelGraph>,
 	material_offsets: Vec<MaterialId>,
@@ -23,7 +23,7 @@ pub struct ModelsStorage {
 impl ModelsStorage {
 	#[inline]
 	pub fn new() -> Self {
-		ModelsStorage { models: Vec::new(), material_offsets: Vec::new() }
+		ModelsStorage::default()
 	}
 
 	#[inline]
@@ -81,7 +81,7 @@ pub struct ModelAssets {
 	pub texture_id: TextureId
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct ModelRegistry {
 	pub entries: HashMap<String, ModelAssets>
 }
@@ -89,7 +89,7 @@ pub struct ModelRegistry {
 impl ModelRegistry {
 	#[inline]
 	pub fn new() -> Self {
-		ModelRegistry { entries: HashMap::new() }
+		ModelRegistry::default()
 	}
 }
 

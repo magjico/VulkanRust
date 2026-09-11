@@ -1,5 +1,5 @@
 mod resources;
-mod app;
+mod core;
 mod manager;
 
 pub use manager::AppManager;

@@ -48,9 +48,9 @@ fn is_physical_device_supported(
         )
     };
 
-    return required_feat_slice.iter().zip(available_feat_slice.iter())
+    required_feat_slice.iter().zip(available_feat_slice.iter())
         .all(|(&req, &avail)| req == vk::FALSE || avail == vk::TRUE)
-        && mandatory_device_extensions.iter().all(|ext| extensions.contains(ext));
+        && mandatory_device_extensions.iter().all(|ext| extensions.contains(ext))
 }
 
 /// Score a physical device (useful to compare physical devices between them)
@@ -212,7 +212,7 @@ pub fn get_physical_devices(
             }
 
             if !QueueFamilyIndices::test_for(
-                &instance,
+                instance,
                 physical_device,
                 surface,
                 mandatory_queue_flags,

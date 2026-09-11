@@ -3,6 +3,7 @@ use vulkanalia::vk::DeviceMemory;
 
 use std::collections::HashMap;
 use std::ptr::copy_nonoverlapping as memcpy;
+use std::mem::size_of_val;
 
 use vulkanalia::prelude::v1_0::*;
 
@@ -77,7 +78,7 @@ pub fn copy_buffers(
     dst_offsets: &[vk::DeviceSize],
     graphics_queue: vk::Queue,
 ) -> Result<()> {
-    begin_setup_command_buffer(&device, setup_command_buffer)?;
+    begin_setup_command_buffer(device, setup_command_buffer)?;
 
     // Commands
     let mut src_offset = 0;
@@ -96,7 +97,7 @@ pub fn copy_buffers(
     }
     unsafe { device.cmd_copy_buffer(setup_command_buffer, source, destination, &regions) };
 
-    flush_setup_command_buffer(&device, setup_command_buffer, graphics_queue)?;
+    flush_setup_command_buffer(device, setup_command_buffer, graphics_queue)?;
 
     Ok(())
 }
@@ -172,7 +173,7 @@ pub fn create_framebuffers(
 /// ## Returns
 /// 
 /// - `Result<(vk::Buffer, vk::DeviceMemory, u64)>` - The interleaved_buffer, the device memory associated,
-/// and finaly an index that say where the index part start in the buffer.
+///   and finally an index that says where the index part start in the buffer.
 /// ```
 pub fn create_interleaved_buffer(
     instance: &Instance,
@@ -183,8 +184,8 @@ pub fn create_interleaved_buffer(
     setup_command_buffer: vk::CommandBuffer,
     graphics_queue: vk::Queue,
 ) -> Result<(vk::Buffer, vk::DeviceMemory, u64)> {
-    let vertex_size = (size_of::<Vertex>() * vertices.len()) as u64;
-    let index_size = (size_of::<u32>() * indices.len()) as u64;
+    let vertex_size = size_of_val(vertices) as u64;
+    let index_size = size_of_val(indices) as u64;
     let size = vertex_size + index_size;
 
     let (staging_buffer, staging_buffer_memory) = create_buffer(
@@ -231,7 +232,7 @@ pub fn create_interleaved_buffer(
     )?;
 
     // Cleanup
-    destroy_buffers(&device, &[staging_buffer], &[staging_buffer_memory]);
+    destroy_buffers(device, &[staging_buffer], &[staging_buffer_memory]);
 
     Ok((interleaved_buffer, interleaved_buffer_memory, aligned_vertex_size))
 }
@@ -299,13 +300,13 @@ pub fn recreate_uniform_buffers(
     uniform_buffers_memory: &mut Vec<vk::DeviceMemory>,
     count: usize,
 ) -> Result<()> {
-    destroy_buffers(&device, &uniform_buffers, &uniform_buffers_memory);
+    destroy_buffers(device, uniform_buffers, uniform_buffers_memory);
 
     // TODO: Maybe this should recreate the exact same number of buffer
     // so we can get rid of the count args for .len() 
     (*uniform_buffers, *uniform_buffers_memory) = create_uniform_buffers(
-        &instance,
-        &device,
+        instance,
+        device,
         physical_device,
         count
     )?;
@@ -388,6 +389,10 @@ impl GeometryBuffer {
 		})
 	}
 
+    /// ## Safety
+    /// 
+    /// The caller must ensure the device is idle and that no pending command buffer
+    /// still references these resources.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
@@ -437,12 +442,24 @@ impl UniformBuffers {
 		})
 	}
 
+    /// ## Safety
+    /// 
+    /// The caller must ensure the device is idle and that no pending command buffer
+    /// still references these resources.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
 		destroy_buffers(device, &self.vk_buffers, &self.vk_buffers_memories);
 	}
 
+    /// Uploads the frame's uniform data into the buffer of the given swapchain image.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the GPU is not currently reading the buffer for
+    /// `image_index`.
+    ///
+    /// `image_index` must be within bounds of the allocated buffers.
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn write(
         &self,

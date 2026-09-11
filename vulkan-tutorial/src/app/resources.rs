@@ -187,12 +187,12 @@ impl Persistent {
 			transient.swapchain.vk_format,
 			transient.depth_attachment.vk_format,
 			gpu.max_msaa_samples,
-			&descriptor_layouts.as_slice()
+			descriptor_layouts.as_slice()
 		)?;
 
 		let uniform_buffers = UniformBuffers::new(
-            &instance,
-            &device,
+            instance,
+            device,
             gpu.physical_device,
             swapchain_images_count
         )?;

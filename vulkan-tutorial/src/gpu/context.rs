@@ -64,7 +64,7 @@ impl GPUContext {
 			disable_screen_rendering
 		)?;
 
-		let max_msaa_samples = get_max_msaa_samples(&instance, physical_device);
+		let max_msaa_samples = get_max_msaa_samples(instance, physical_device);
 
 		let mut queue_family_indices = QueueFamilyIndices::create(
 			instance,

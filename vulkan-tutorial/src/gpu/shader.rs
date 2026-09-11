@@ -19,7 +19,7 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
         .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
 
     // Light binding
-    let light_binding = vk::DescriptorSetLayoutBinding::builder()
+    let light_binding: vk::DescriptorSetLayoutBindingBuilder<'_> = vk::DescriptorSetLayoutBinding::builder()
         .binding(1)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(1)
@@ -118,6 +118,14 @@ impl ShaderStagesBuilder {
             .collect()
     }
 
+    /// ## Safety
+    ///
+    /// The caller must not call this before every pipeline built from these modules
+    /// has been created: `vkCreateGraphicsPipelines` reads the module bytecode at
+    /// creation time.
+    ///
+    /// Once the pipelines exist, the modules can be destroyed immediately — they are
+    /// no longer needed.
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
         for module in &self.modules {

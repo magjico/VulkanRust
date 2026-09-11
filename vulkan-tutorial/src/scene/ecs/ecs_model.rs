@@ -248,7 +248,7 @@ impl ModelSpawnBuilder {
 					.ok_or_else(|| anyhow!("SSBO capacity exceeded - cannot allocatate skinning slot"))?;
 
 				Ok(SkeletonInstance {
-					skin_id:	skin_id,
+					skin_id,
 					anim_id:	self.anim_id.unwrap_or(AnimationId(0)),
 					anim_time:	self.anim_time.unwrap_or(0.0),
 					ssbo_offset

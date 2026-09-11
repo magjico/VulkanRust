@@ -220,21 +220,11 @@ pub struct Primitive {
     pub material_id: Option<MaterialId>,
 }
 
+// TODO: mesh builder struct ?
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub primitives: Vec<Primitive>,
-}
-
-// TODO: mesh builder struct ?
-impl Default for Mesh {
-    fn default() -> Self {
-        Self {
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            primitives: Vec::new(),
-        }
-    }
 }

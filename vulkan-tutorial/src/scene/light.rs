@@ -65,6 +65,10 @@ impl LightBuffer {
 		Ok(())
 	}
 
+	/// ## Safety
+    ///
+    /// The caller must ensure the device is idle and that no descriptor set still
+    /// referencing this buffer is bound by a pending command buffer.
 	#[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
 		device.destroy_buffer(self.buffer, None);

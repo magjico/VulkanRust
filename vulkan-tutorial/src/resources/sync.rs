@@ -58,6 +58,12 @@ impl FrameSync {
 		})
 	}
 
+	// Destroys the semaphores and fences used to order frames in flight.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: destroying a fence or semaphore
+    /// still awaited by a pending submission is undefined behaviour.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {

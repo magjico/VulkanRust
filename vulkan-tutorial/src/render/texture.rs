@@ -24,6 +24,12 @@ pub struct TextureData {
 }
 
 impl TextureData {
+    /// Destroys the image, its view, its sampler and the backing memory.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle and that no descriptor set still
+    /// referencing this texture is bound by a pending command buffer.
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_sampler(self.sampler, None);
@@ -33,13 +39,13 @@ impl TextureData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TexturesStorage(pub Vec<TextureData>);
 
 impl TexturesStorage {
     #[inline]
     pub fn new() -> Self {
-        TexturesStorage(Vec::new())
+        Self::default()
     }
 
     #[inline]
@@ -82,6 +88,11 @@ impl TexturesStorage {
         self.0.iter_mut()
     }
 
+    /// Destroys every texture in the storage.
+    ///
+    /// ## Safety
+    ///
+    /// Same safety as [TextureData::destroy], applied to all textures.
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
@@ -151,7 +162,7 @@ pub fn create_texture_image(
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
-    begin_setup_command_buffer(&device, setup_command_buffer)?;
+    begin_setup_command_buffer(device, setup_command_buffer)?;
 
 	transition_image_layout(
 		device,
@@ -183,7 +194,7 @@ pub fn create_texture_image(
 		mip_levels
 	)?;
 
-    flush_setup_command_buffer(&device, setup_command_buffer, graphics_queue)?;
+    flush_setup_command_buffer(device, setup_command_buffer, graphics_queue)?;
 
     unsafe {
         device.destroy_buffer(staging_buffer, None);

@@ -42,7 +42,7 @@ impl NodeTransform {
     pub fn get_scale(&self) -> Vec3 {
         match self {
             NodeTransform::Trs { scale, .. } => *scale,
-            NodeTransform::Matrix(m) => extract_scale_from_mat4(&m),
+            NodeTransform::Matrix(m) => extract_scale_from_mat4(m),
         }
     }
 
@@ -129,7 +129,7 @@ impl Default for ModelNodeData {
         Self {
             name: String::new(),
             mesh: None,
-            transform: transform,
+            transform,
             global_transform: Mat4::identity(),
             skin: -1,
         }

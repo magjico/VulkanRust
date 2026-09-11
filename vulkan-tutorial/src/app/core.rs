@@ -128,7 +128,7 @@ impl App {
 		};
 		// endregion
 
-		let input_bindings = InputBindings::bind_from_file(&INPUT_PATH)?;
+		let input_bindings = InputBindings::bind_from_file(INPUT_PATH)?;
 
 		Ok(Self {
 			entry,
