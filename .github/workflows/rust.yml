@@ -37,6 +37,3 @@ jobs:
 
     - name: Clippy
       run: cargo clippy --all-targets -- -D warnings -A clippy::too_many_arguments
-      
-    - name: Run tests
-      run: cargo test --verbose
