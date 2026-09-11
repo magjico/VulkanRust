@@ -180,7 +180,7 @@ impl Swapchain {
         )?;
 
         let vk_image_views = create_swapchain_image_views(
-            &device,
+            device,
             &vk_images,
             vk_format
         )?;
@@ -194,6 +194,11 @@ impl Swapchain {
 		})
 	}
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: destroying a swapchain whose images
+    /// are still referenced by a pending submission, or awaiting presentation, is
+    /// undefined behaviour.
 	#[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
         self.vk_image_views.iter().for_each(|v| device.destroy_image_view(*v, None));

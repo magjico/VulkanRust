@@ -29,17 +29,17 @@ use crate::gpu::get_memory_type_index;
 /// use crate::resources::create_image;
 /// 
 /// let (color_image, color_image_memory) = create_image(
-/// 	instance,
-/// 	device,
-/// 	physical_device,
+///     instance,
+///     device,
+///     physical_device,
 ///     swapchain_extent.width,
-/// 	swapchain_extent.height,
-/// 	1,
-/// 	vk::SampleCountFlags::_64, 
-/// 	vk::Format::B8G8R8A8_SRGB,
-/// 	vk::ImageTiling::OPTIMAL,
-/// 	vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-/// 	vk::MemoryPropertyFlags::DEVICE_LOCAL
+///     swapchain_extent.height,
+///     1,
+///     vk::SampleCountFlags::_64, 
+///     vk::Format::B8G8R8A8_SRGB,
+///     vk::ImageTiling::OPTIMAL,
+///     vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+///     vk::MemoryPropertyFlags::DEVICE_LOCAL
 /// )?;
 /// ```
 pub fn create_image(

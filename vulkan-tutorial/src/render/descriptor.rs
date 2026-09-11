@@ -69,6 +69,10 @@ impl DescriptorLayouts {
 
 	#[inline] pub fn as_slice(&self) -> &[vk::DescriptorSetLayout] { &self.0 }
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle, and that no pipeline layout or
+    /// command buffer still in use was built from these layouts.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
@@ -180,14 +184,14 @@ impl Descriptors {
 		device: &Device,
 		uniform_buffers: &[vk::Buffer],
 	) {
-		for i in 0..self.global_descriptor_sets.len() {
+		for (set, buffer) in self.global_descriptor_sets.iter().zip(uniform_buffers) {
             let buffer_info = &[*vk::DescriptorBufferInfo::builder()
-                .buffer(uniform_buffers[i])
+                .buffer(*buffer)
                 .offset(0)
                 .range(size_of::<UniformBufferObject>() as u64)];
 
             let ubo_write = vk::WriteDescriptorSet::builder()
-                .dst_set(self.global_descriptor_sets[i])
+                .dst_set(*set)
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
@@ -197,6 +201,10 @@ impl Descriptors {
         }
 	}
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle, and that none of these sets is still
+    /// bound by a pending command buffer.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
 	#[inline]
@@ -358,7 +366,7 @@ fn create_material_descriptor_sets(
     };
 
     for (i, material) in materials.iter().enumerate() {
-        let image_infos: Vec<vk::DescriptorImageInfo> = vec![
+        let image_infos: Vec<vk::DescriptorImageInfo> = [
             material.base_color_texture_idx,
             material.metallic_roughness_texture_idx,
             material.normal_texture_idx,

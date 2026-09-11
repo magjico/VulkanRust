@@ -146,6 +146,13 @@ impl CommandRecorder {
 		})
 	}
 
+    /// Destroys the command pools, which implicitly frees every command buffer
+    /// allocated from them.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: destroying a pool whose buffers are
+    /// still executing, or awaiting execution, is undefined behaviour.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
@@ -464,13 +471,8 @@ impl CommandRecorder {
                 }
             }
 
-            let material = {
-                if let Some(material_id) = item.material_id {
-                    Some(models.get_model(item.model_id).get_material(material_id))
-                } else {
-                    None
-                }
-            };
+            let material = item.material_id.map(|material_id| models.get_model(item.model_id)
+                .get_material(material_id));
 
             let push_constant = PushConstants::new(item.node_matrix, material);
 

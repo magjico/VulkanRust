@@ -65,15 +65,18 @@ impl ColorAttachment {
 			1
 		)?;
 
-		Ok(Self {
-			0: AttachmentImage {
+		Ok(Self(AttachmentImage {
 				vk_image,
 				vk_image_memory,
 				vk_image_view
-			}
-		})
+			})
+		)
 	}
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: the image may still be used as a
+    /// render target by a pending command buffer.
 	#[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
 		self.0.destroy(device);
@@ -131,6 +134,10 @@ impl DepthAttachment {
 		})
 	}
 
+	/// ## Safety
+    ///
+    /// The caller must ensure the device is idle: the image may still be used as a
+    /// render target by a pending command buffer.
 	#[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
 		self.attachment.destroy(device);

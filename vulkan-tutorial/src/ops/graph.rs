@@ -114,6 +114,10 @@ impl<T> FlatGraph<T> {
 	pub fn len(&self) -> usize {
 		self.nodes.len()
 	}
+	#[inline]
+	pub fn is_empty(&self) -> bool {
+		self.nodes.is_empty()
+	}
 
 	fn compute_depth(nodes: &[Node<T>], id: NodeId) -> u32 {
 		let mut parent = nodes[id.0].parent;

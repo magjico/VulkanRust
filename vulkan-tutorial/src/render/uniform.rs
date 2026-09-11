@@ -25,7 +25,7 @@ pub struct InstanceData {
 /// 
 /// - `view` (`Mat4`) - View matrix.
 /// - `proj` (`Mat4`) - Proj matrix.
-/// - `light_positions` (`[Vec4; 4]`) - Position and radius	(xyz = position, w = radius).
+/// - `light_positions` (`[Vec4; 4]`) - Position and radius (xyz = position, w = radius).
 /// - `light_colors` (`[Vec4; 4]`) - RGB color and intensity (xyz = rgb, w = intensity).
 /// - `cam_pos` (`Vec4`) - Camera position for view-dependent effects.
 /// - `exposure` (`f32`) - Exposure for HDR rendering.

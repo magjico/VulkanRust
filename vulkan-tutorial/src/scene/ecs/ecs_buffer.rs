@@ -122,6 +122,10 @@ impl SkinningBuffer {
         }
     }
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle. The persistent mapping is released
+    /// here, so any pointer previously obtained from this buffer becomes dangling.
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) { self.0.destroy(device); }
@@ -160,6 +164,10 @@ impl InstanceBuffer {
         }
     }
 
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle. The persistent mapping is released
+    /// here, so any pointer previously obtained from this buffer becomes dangling.
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) { self.0.destroy(device); }

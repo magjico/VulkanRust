@@ -159,6 +159,12 @@ impl Pipeline {
 		Ok(Self { vk_pipeline, vk_layout })
     }
 
+	/// Destroys the graphics pipeline and its layout.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle: the pipeline may still be bound by
+    /// a command buffer awaiting execution.
 	#[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.vk_pipeline, None);

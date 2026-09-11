@@ -17,7 +17,7 @@ use winit::event::{
 	StartCause,
 };
 
-use super::app::App;
+use super::core::App;
 use crate::scene::{
 	ECSContext,
 	Time,
@@ -55,7 +55,7 @@ impl ApplicationHandler for AppManager {
 						elwt.exit();
 					}
                 }
-                WindowEvent::Resized(size) => if size.width != 0 && size.height != 0 {
+                WindowEvent::Resized(size) if size.width != 0 && size.height != 0 => {
                     app.window_resized = true;
                 }
                 _ => {}
