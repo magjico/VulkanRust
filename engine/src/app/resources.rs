@@ -106,6 +106,9 @@ impl SwapchainDependant {
 		})
 	}
 
+	/// ## Safety
+	/// 
+	/// The caller must ensure the device is idle.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
 	pub unsafe fn destroy(&self, device: &Device) {
@@ -290,6 +293,9 @@ impl Persistent {
 		})
 	}
 
+	/// ## Safety
+	/// 
+	/// The caller must ensure the device is idle.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {

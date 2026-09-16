@@ -145,6 +145,9 @@ impl App {
 		})
 	}
 
+	/// ## Safety
+	/// 
+	/// No safety needed this function idle the device enabling a safe destroy of all app resources.
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&mut self) {
