@@ -1,6 +1,7 @@
 //! Setup multiple **specific** app objects
 use anyhow::anyhow;
-use cgmath::One;
+use cgmath::Rotation3;
+use cgmath::{One, Deg};
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
@@ -101,7 +102,7 @@ pub fn spawn_from_cesium_man_instances(
 		.map(|(i, &pos)| {
 			let transform =  Transform::new(
 				pos,
-				Quat::one(),
+				Quat::from_angle_y(Deg(90.0)),
 				Vec3::new(1.0, 1.0, 1.0)
 			);
 
