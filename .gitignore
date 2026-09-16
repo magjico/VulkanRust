@@ -13,6 +13,6 @@ docs/graphic_computing_help/
 *.gltf
 
 # 3D
-vulkan-tutorial/resources/textures/
-vulkan-tutorial/resources/3D_meshes/
-vulkan-tutorial/resources/glb/
+engine/resources/textures/
+engine/resources/3D_meshes/
+engine/resources/glb/
