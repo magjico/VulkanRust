@@ -21,7 +21,7 @@ use gltf::animation::{Interpolation, Property};
 use vulkanalia::prelude::v1_0::*;
 
 use crate::ops::{FlatGraph, Node};
-use crate::type_safety::{NodeId, SamplerId, MaterialId, TextureId};
+use crate::type_safety::{NodeId, MaterialId, TextureId, SamplerId};
 use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
@@ -176,14 +176,11 @@ pub fn load_3d_content(
     )?;
 
     let texture_image_view = create_texture_image_view(device, texture_image, mip_levels)?;
-    let texture_sampler = create_texture_sampler(device, mip_levels as f32)?;
 
     let texture = TextureData {
         image: texture_image,
         image_memory: texture_image_memory,
         image_view: texture_image_view,
-        sampler: texture_sampler,
-        mip_levels
     };
 
     Ok((mesh, texture))
@@ -357,15 +354,12 @@ fn load_gltf_textures(
             format,
         )?;
         let texture_image_view = create_texture_image_view(device, texture_image, mip_levels)?;
-        let texture_sampler = create_texture_sampler(device, mip_levels as f32)?;
                 
         // vk_textures.push((texture_image, texture_image_memory, texture_image_view, texture_sampler));
         vk_textures.push(TextureData {
             image: texture_image,
             image_memory: texture_image_memory,
             image_view: texture_image_view,
-            sampler: texture_sampler,
-            mip_levels
         });
     }
 
@@ -525,7 +519,7 @@ fn load_gltf_animations(
             AnimationChannel {
                 path,
                 node_id,
-                sampler_id
+                sampler_id,
             }
         })
         .collect();

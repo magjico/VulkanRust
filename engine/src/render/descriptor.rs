@@ -117,6 +117,7 @@ impl Descriptors {
         uniform_buffers:			&[vk::Buffer],
         textures:					&TexturesStorage,
         default_texture:			&TextureData,
+        texture_sampler:            vk::Sampler,
 		models:						&ModelsStorage,
         light_buffer:				&LightBuffer,
         images_count:				usize,
@@ -153,7 +154,8 @@ impl Descriptors {
             descriptor_pool,
             &materials,
             textures,
-            default_texture
+            default_texture,
+            texture_sampler
         )?;
 
 		let skinning_descriptor_set = create_storage_descriptor_set(
@@ -346,6 +348,7 @@ fn create_material_descriptor_sets(
     materials: &[&Material],
     textures: &TexturesStorage,
     default_texture: &TextureData,
+    texture_sampler: vk::Sampler,
 ) -> Result<Vec<vk::DescriptorSet>> {
     let layouts = vec![material_set_layout; materials.len()];
 
@@ -377,7 +380,7 @@ fn create_material_descriptor_sets(
             *vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_view(tex.image_view)
-                .sampler(tex.sampler)
+                .sampler(texture_sampler)
         }).collect();
 
         let sampler_write = vk::WriteDescriptorSet::builder()
