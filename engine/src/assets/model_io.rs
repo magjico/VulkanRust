@@ -372,7 +372,8 @@ fn load_gltf_materials(
 
     let materials: Vec<Material> = materials.map(|material| {
         let pbr = material.pbr_metallic_roughness();
-        let base_color_factor = pbr.base_color_factor();
+        let base_color_factor = Vec4::from(pbr.base_color_factor());
+        let emissive_factor = Vec3::from(material.emissive_factor());
 
         let alpha_mask = match material.alpha_mode() {
             gltf::material::AlphaMode::Mask => 1.0,
@@ -380,18 +381,10 @@ fn load_gltf_materials(
         };
 
         Material {
-            base_color_factor: Vec4::new(
-                base_color_factor[0],
-                base_color_factor[1],
-                base_color_factor[2],
-                base_color_factor[3]
-            ),
+            base_color_factor,
             metallic_factor: pbr.metallic_factor(),
             roughness_factor: pbr.roughness_factor(),
-            emissive_factor: {
-                let e = material.emissive_factor();
-                Vec3::new(e[0], e[1], e[2])
-            },
+            emissive_factor,
 
             base_color_texture_idx: pbr.base_color_texture()
                 .map(|info| Some(TextureId(info.texture().source().index())))

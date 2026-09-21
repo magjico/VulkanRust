@@ -84,18 +84,19 @@ pub struct PushConstants {
     pub node: Mat4,                             // 64	bytes	->	 64 / 128
 
     // fragment shader push constants
-    pub base_color_factor: Vec4,                // 16   bytes   ->   80 / 128
-    pub metallic_factor: f32,					//  4	bytes	->	 84 / 128
-	pub roughness_factor: f32,					//  4	bytes	->	 88 / 128
-	pub base_color_texture_set: i32,			//  4	bytes	->   92 / 128
-	pub physical_descriptor_texture_set: i32,	//  4	bytes	->	 96 / 128
-	pub normal_texture_set: i32,				//  4	bytes	->	100 / 128
-	pub occlusion_texture_set: i32,				//  4	bytes	->	104 / 128
-	pub emissive_texture_set: i32,				//  4	bytes	->	108 / 128
-	pub alpha_mask: f32,						//  4	bytes	->	112	/ 128
-	pub alpha_mask_cutoff: f32,					//  4	bytes	->	116	/ 128
+    pub base_color_factor: Vec4,               	// 16   bytes   ->   80 / 128
+    pub emissive_factor: Vec3,                  // 12   bytes   ->   92 / 128
+    pub metallic_factor: f32,					//  4	bytes	->	 96 / 128
+    pub roughness_factor: f32,					//  4	bytes	->	100 / 128
+	pub base_color_texture_set: i32,			//  4	bytes	->  104 / 128
+	pub physical_descriptor_texture_set: i32,	//  4	bytes	->	108 / 128
+	pub normal_texture_set: i32,				//  4	bytes	->	112 / 128
+	pub occlusion_texture_set: i32,				//  4	bytes	->	116 / 128
+	pub emissive_texture_set: i32,				//  4	bytes	->	120 / 128
+	pub alpha_mask: f32,						//  4	bytes	->	124	/ 128
+	pub alpha_mask_cutoff: f32,					//  4	bytes	->	128	/ 128
 
-	// TOTAL: 116 bytes out of 128 bytes used.
+	// TOTAL: 128 bytes out of 128 bytes used.
 }
 
 impl PushConstants {
@@ -109,6 +110,7 @@ impl PushConstants {
             node: node_matrix,
 
             base_color_factor:                  material.map(|m| m.base_color_factor).unwrap_or(Vec4::new(1.0, 1.0, 1.0, 1.0)),
+            emissive_factor:                    material.map(|m| m.emissive_factor).unwrap_or(Vec3::new(0.0, 0.0, 0.0)),
             metallic_factor:                    material.map(|m| m.metallic_factor).unwrap_or(1.0),
             roughness_factor:                   material.map(|m| m.roughness_factor).unwrap_or(1.0),
             base_color_texture_set:             material.map(|m| m.base_color_texture_set).unwrap_or(-1),

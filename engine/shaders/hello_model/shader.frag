@@ -35,17 +35,18 @@ const int TEX_EMISSIVE_IDX				= 4;
 
 
 layout(push_constant) uniform PushConstants {
-	layout(offset = 64) vec4 baseColorFactor;	// RGB base color and alpha								(offset 64)
-    float metallicFactor;						// How metallic the surface is							(offset 80)
-    float roughnessFactor;						// How rough the surface is								(offset 84)
+	layout(offset = 64) vec4 baseColorFactor;	// RGB base color and alpha										(offset 64)
+	vec3 emissiveFactor;						// A linear RGB multiplier applied to the emissive texture.		(offset 80)
+    float metallicFactor;						// How metallic the surface is									(offset 92)
+    float roughnessFactor;						// How rough the surface is										(offset 96)
 	
-    int baseColorTextureSet;					// Texture coordinate set for base color				(offset 88)
-    int physicalDescriptorTextureSet;			// Texture coordinate set for metallic-roughness		(offset 92)
-    int normalTextureSet;						// Texture coordinate set for normal map				(offset 96)
-    int occlusionTextureSet;					// Texture coordinate set for occlusion					(offset 100)
-    int emissiveTextureSet;						// Texture coordinate set for emission					(offset 104)
-	float alphaMask;							// Whether to use alpha masking							(offset 108)
-    float alphaMaskCutoff;						// Alpha threshold for masking							(offset 112)
+    int baseColorTextureSet;					// Texture coordinate set for base color						(offset 100)
+    int physicalDescriptorTextureSet;			// Texture coordinate set for metallic-roughness				(offset 104)
+    int normalTextureSet;						// Texture coordinate set for normal map						(offset 108)
+    int occlusionTextureSet;					// Texture coordinate set for occlusion							(offset 112)
+    int emissiveTextureSet;						// Texture coordinate set for emission							(offset 116)
+	float alphaMask;							// Whether to use alpha masking									(offset 120)
+    float alphaMaskCutoff;						// Alpha threshold for masking									(offset 124)
 	// Total: 116 bytes / 128 bytes used (112 + 4).
 } pcs;
 
@@ -78,6 +79,8 @@ vec2 uvFor(int set) {
 	* using the squared of the squared roughness result into a more perceptual linear progression
 	* of the roughness for the human eye.
 	*
+	* use Karis formula: https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf
+	*
 	* This is also a simplified version of the GGX Distribution which assume that:
 	* 1) N and H are normalized vectors.
 	* 2) roughness is the same following the X and Y principal axis.
@@ -89,12 +92,12 @@ vec2 uvFor(int set) {
 float disneyGGXDistribution(float NdotH, float roughness)
 {
     float alpha = roughness * roughness;
-	float alpha_disney = alpha * alpha;
+	float alpha2 = alpha * alpha;
 	float NdotH2 = NdotH * NdotH;
 
-	float denom = (NdotH2 * (alpha_disney - 1.0) + 1.0);
+	float denom = (NdotH2 * (alpha2 - 1.0) + 1.0);
 
-	return alpha_disney / denom;
+	return alpha2 / (PI * denom * denom);
 }
 
 
@@ -195,15 +198,18 @@ void main()
 
 	vec2 metallicRoughness = texture(sampler2D(textures[TEX_METALLIC_ROUGHNESS_IDX], texSampler), uvFor(pcs.physicalDescriptorTextureSet)).bg;
 	float metallic	= metallicRoughness.x * pcs.metallicFactor;
-	float roughness	= metallicRoughness.y * pcs.roughnessFactor;
+	// Clamp perceptual roughness away from zero: GGX degenerates into a Dirac spike
+	// at roughness 0 (division by zero, NaN), and very low values produce sub-pixel,
+	// aliased highlights. 0.04 is an empirical floor common for fp32 shaders.
+	float roughness	= clamp(metallicRoughness.y * pcs.roughnessFactor, 0.04, 1.0);
 	float ao		= texture(sampler2D(textures[TEX_OCCLUSION_IDX], texSampler), uvFor(pcs.occlusionTextureSet)).r;
-	vec3 emissive	= texture(sampler2D(textures[TEX_EMISSIVE_IDX], texSampler), uvFor(pcs.emissiveTextureSet)).rgb;
+	vec3 emissive	= texture(sampler2D(textures[TEX_EMISSIVE_IDX], texSampler), uvFor(pcs.emissiveTextureSet)).rgb * pcs.emissiveFactor;
 
 	// 2 - Calculate Normal in tangent space
 	vec3 N = normalize(fragNormal);
 	if (pcs.normalTextureSet >= 0) {
 		vec3 tangentNormal = texture(sampler2D(textures[TEX_NORMAL_IDX], texSampler), uvFor(pcs.normalTextureSet)).xyz * 2.0 - 1.0;
-		vec3 T = normalize(fragTangent.xyz);
+		vec3 T = normalize(fragTangent.xyz - dot(fragTangent.xyz, N) * N); // Gram-Schmidt
 		vec3 B = normalize(cross(N, T)) * fragTangent.w;
 		mat3 TBN = mat3(T, B, N);
 		N = normalize(TBN * tangentNormal);
@@ -215,6 +221,7 @@ void main()
 	// 4 - Calculate F0 (base reflexivity)
 	vec3 F0 = vec3(0.04); // 0.04 is the normal-incidence reflectivity of dielectrics (non-metallic materials) — corresponds to a refractive index (IOR) of 1.5, the average value for glass and plastic.
 	F0 = mix(F0, baseColor.rgb, metallic);
+	float NdotV = max(dot(N, V), 0.0);
 
 	// 5 - Calculate lighting for each light
 	// Initialize lightning
@@ -222,20 +229,24 @@ void main()
 
 	for (int i=0; i < lights.length(); i++) {
 		vec3 lightPos = lights[i].position.xyz;
+		vec3 toLight = lightPos - fragWorldPos;
 		vec3 lightColor = lights[i].color.rgb * lights[i].color.w;
 
 		// Calculate light direction and distance
-		vec3 L				= normalize(lightPos - fragWorldPos);
-		float dist			= length(lightPos - fragWorldPos);
-		float attenuation 	= 1.0 / (dist * dist);
-		vec3 radiance		= lightColor * attenuation;
+		float dist = length(toLight);
+		vec3 L = toLight / dist;
+
+		// not computing unseen elements
+		float NdotL = max(dot(N, L), 0.0);
+		if (NdotL <= 0) continue; 
+
+		float attenuation 	= dist * dist;
+		vec3 radiance		= lightColor / attenuation;
 
 		// Calculate hald-vector (the normalized vector halfway between view and light direction)
 		vec3 H = normalize(V + L);
 
 		// Calculate BRDF terms
-		float NdotL = max(dot(N, L), 0.0);
-        float NdotV = max(dot(N, V), 0.0);
         float NdotH = max(dot(N, H), 0.0);
         float HdotV = max(dot(H, V), 0.0);
 
@@ -247,18 +258,15 @@ void main()
 		vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
 
 		// Energy conservation
-		vec3 kD = vec3(1.0) - F;
-		kD *= 1.0 - metallic;
+		vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
 
 		// Add to outgoing radiance
 		Lo += (kD * baseColor.rgb / PI + specular) * radiance * NdotL;
 	}
 
-	vec3 ambient	= vec3(0.03) * baseColor.rgb * ao;
-	vec3 color		= ambient + Lo; // + emissive;
-	// color = color / (color + vec3(1.0));
-	// color = ACESFilm(color * ubo.exposure);
-	// color = pow(color, vec3(1.0 / ubo.gamma));
+	vec3 ambient = vec3(0.03) * baseColor.rgb * ao;
+	vec3 color = ambient + Lo; // + emissive;
+	color = ACESFilm(color * ubo.exposure);
 
     outColor = vec4(color, baseColor.a);
 }
