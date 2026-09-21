@@ -42,7 +42,7 @@ use crate::type_safety::{
 /// 
 /// [[vk::DescriptorSetLayout]; 4]:
 /// - **Set 0**. Camera and PBR uniforms (binding 0) plus the light SSBO (binding 1). Bound once per frame.
-/// - **Set 1**. The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive. Rebound whenever the material changes.
+/// - **Set 1**. The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive + One PBR sampler. Rebound whenever the material changes.
 /// - **Set 2**. Joint matrix SSBO shared by every skinned instance. Bound once per frame.
 /// - **Set 3**. Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
 #[derive(Debug)]
@@ -225,7 +225,7 @@ impl Descriptors {
 ///
 /// - `device` ( &[Device] ) - The Vulkan device.
 /// - `swapchain_images_count` ( `u32` ) - Number of swapchain images; one global descriptor set is allocated per image.
-/// - `materials_count` ( `u32` ) - Total number of materials across all loaded models. Each needs five combined image samplers.
+/// - `materials_count` ( `u32` ) - Total number of materials across all loaded models. Each needs five combined image and one sampler.
 fn create_descriptor_pool(
     device: &Device,
     swapchain_images_count: u32,
@@ -235,9 +235,13 @@ fn create_descriptor_pool(
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(swapchain_images_count);
 
-    let sampler_size = vk::DescriptorPoolSize::builder()
-        .type_(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+    let sampled_image_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::SAMPLED_IMAGE)
         .descriptor_count(materials_count * 5);
+
+    let sampler_size = vk::DescriptorPoolSize::builder()
+        .type_(vk::DescriptorType::SAMPLER)
+        .descriptor_count(materials_count);
 
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
@@ -247,7 +251,7 @@ fn create_descriptor_pool(
             + swapchain_images_count 	// Light SSBO size      -> 1 for each swapchain image
         );
 
-    let pool_sizes = &[ubo_size, sampler_size, ssbo_size];
+    let pool_sizes = &[ubo_size, sampled_image_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
         .max_sets(swapchain_images_count + materials_count + 1 + 1);
@@ -337,6 +341,7 @@ fn create_global_descriptor_sets(
 /// - `materials` ( &\[&[Material]] ) - Every material of every loaded model, concatenated in model order.
 /// - `textures` ( &[TexturesStorage] ) - Shared texture storage the material texture ids index into.
 /// - `default_texture` ( &[TextureData] ) - Fallback bound wherever a material declares no texture.
+/// - `texture_sampler` ( &[vk::Sampler] ) - A unique shared texture sampler
 ///
 /// ## Returns
 ///
@@ -380,17 +385,25 @@ fn create_material_descriptor_sets(
             *vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_view(tex.image_view)
-                .sampler(texture_sampler)
         }).collect();
 
-        let sampler_write = vk::WriteDescriptorSet::builder()
+        let sampler_info = &[*vk::DescriptorImageInfo::builder().sampler(texture_sampler)];
+
+        let images_write = vk::WriteDescriptorSet::builder()
             .dst_set(descriptor_sets[i])
             .dst_binding(0)
             .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
             .image_info(&image_infos);
 
-        unsafe { device.update_descriptor_sets(&[sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+        let sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(1)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .image_info(sampler_info);
+
+        unsafe { device.update_descriptor_sets(&[images_write, sampler_write], &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)

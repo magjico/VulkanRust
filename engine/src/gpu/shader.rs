@@ -37,18 +37,25 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
 /// create material set layout in this order:
 /// base color, metallic-roughness, normal map, occlusion map, emissive map.
 /// 
+/// and create a shared sampler layout.
+/// 
 /// **change by mesh**
 pub fn create_material_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
-    let bindings: Vec<vk::DescriptorSetLayoutBinding>  = (0..5u32)
-        .map(|i| *vk::DescriptorSetLayoutBinding::builder()
-            .binding(i)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-        ).collect();
-    
+    let images_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(5)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_type(vk::DescriptorType::SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[images_binding, sampler_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
-        .bindings(&bindings);
+        .bindings(bindings);
 
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
     Ok(descriptor_set_layout)
