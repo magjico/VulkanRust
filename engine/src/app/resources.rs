@@ -10,14 +10,15 @@ use crate::gpu::{
     GPUContext,
 };
 use crate::render::{
-	Swapchain,
 	ColorAttachment,
+	CommandRecorder,
 	DepthAttachment,
 	DescriptorLayouts,
 	Descriptors,
-	CommandRecorder,
-	TexturesStorage,
+	Swapchain,
 	TextureData,
+	TexturesStorage,
+	create_texture_sampler,
 };
 use crate::resources::{
 	UniformBuffers,
@@ -164,6 +165,7 @@ pub struct Persistent {
 	pub command_recorder:		CommandRecorder,
 	pub geometry_buffer:		GeometryBuffer,
 	pub textures:				TexturesStorage,
+	pub texture_sampler:		vk::Sampler,
 	pub default_texture:		TextureData,
 	pub camera:					Camera,
 	pub light_buffer:			LightBuffer,
@@ -221,6 +223,8 @@ impl Persistent {
 			&mut model_registry
 		)?;
 
+		let texture_sampler = create_texture_sampler(device)?;
+
 		let default_texture = create_default_texture(
 			instance,
 			device,
@@ -251,6 +255,7 @@ impl Persistent {
 			&uniform_buffers.vk_buffers,
 			&textures,
 			&default_texture,
+			texture_sampler,
 			&models,
 			&light_buffer,
 			swapchain_images_count
@@ -286,6 +291,7 @@ impl Persistent {
 			command_recorder,
 			geometry_buffer,
 			textures,
+			texture_sampler,
 			default_texture,
 			camera,
 			light_buffer,
@@ -302,6 +308,7 @@ impl Persistent {
 		self.uniform_buffers.destroy(device);
 		self.graphic_pipeline.destroy(device);
 		self.textures.destroy(device);
+		device.destroy_sampler(self.texture_sampler, None);
 		self.default_texture.destroy(device);
 		self.light_buffer.destroy(device);
 		self.descriptors.destroy(device);

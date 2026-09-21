@@ -182,14 +182,11 @@ pub fn create_default_texture(
     )?;
 
     let image_view = create_texture_image_view(device, image, mip_levels)?;
-    let sampler = create_texture_sampler(device, mip_levels as f32)?;
 
     Ok(TextureData {
         image,
         image_memory,
         image_view,
-        sampler,
-        mip_levels,
     })
 }
 

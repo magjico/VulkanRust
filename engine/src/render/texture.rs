@@ -19,8 +19,6 @@ pub struct TextureData {
     pub image: vk::Image,
     pub image_memory: vk::DeviceMemory,
     pub image_view: vk::ImageView,
-    pub sampler: vk::Sampler,
-    pub mip_levels: u32
 }
 
 impl TextureData {
@@ -32,7 +30,6 @@ impl TextureData {
     /// referencing this texture is bound by a pending command buffer.
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_sampler(self.sampler, None);
         device.destroy_image_view(self.image_view, None);
         device.destroy_image(self.image, None);
         device.free_memory(self.image_memory, None);
@@ -243,7 +240,7 @@ pub fn create_texture_image_view(
 /// 
 /// - Result<[`vk::Sampler`]>.
 /// ```
-pub fn create_texture_sampler(device: &Device, mip_levels: f32) -> Result<vk::Sampler> {
+pub fn create_texture_sampler(device: &Device) -> Result<vk::Sampler> {
     let info = vk::SamplerCreateInfo::builder()
         .mag_filter(vk::Filter::LINEAR)
         .min_filter(vk::Filter::LINEAR)
@@ -259,7 +256,7 @@ pub fn create_texture_sampler(device: &Device, mip_levels: f32) -> Result<vk::Sa
         .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
         .mip_lod_bias(0.0)
         .min_lod(0.0)
-        .max_lod(mip_levels);
+        .max_lod(vk::LOD_CLAMP_NONE);
 
     let texture_sampler = unsafe { device.create_sampler(&info, None)? };
 

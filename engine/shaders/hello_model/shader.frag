@@ -24,11 +24,15 @@ layout(set = 0, binding = 1) readonly buffer Lights {
 };
 
 // Take a look at create_material_descriptor_set_layout in shader.rs
-layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
-layout(set = 1, binding = 1) uniform sampler2D metallicRoughnessTexture;
-layout(set = 1, binding = 2) uniform sampler2D normalTexture;
-layout(set = 1, binding = 3) uniform sampler2D occlusionTexture;
-layout(set = 1, binding = 4) uniform sampler2D emissiveTexture;
+layout(set = 1, binding = 0) uniform texture2D textures[5];
+layout(set = 1, binding = 1) uniform sampler texSampler;
+
+const int TEX_BASE_COLOR_IDX			= 0;
+const int TEX_METALLIC_ROUGHNESS_IDX	= 1;
+const int TEX_NORMAL_IDX				= 2;
+const int TEX_OCCLUSION_IDX				= 3;
+const int TEX_EMISSIVE_IDX				= 4;
+
 
 layout(push_constant) uniform PushConstants {
 	layout(offset = 64) vec4 baseColorFactor;	// RGB base color and alpha								(offset 64)
@@ -184,21 +188,21 @@ vec3 ACESFilm(vec3 x) {
 void main()
 {
 	// 1 - sample material textures
-    vec4 baseColor = texture(baseColorTexture, uvFor(pcs.baseColorTextureSet)) * pcs.baseColorFactor;
+    vec4 baseColor = texture(sampler2D(textures[TEX_BASE_COLOR_IDX], texSampler), uvFor(pcs.baseColorTextureSet)) * pcs.baseColorFactor;
 
 	// alpha-masking
 	if (pcs.alphaMask == 1.0 && baseColor.a < pcs.alphaMaskCutoff) discard;
 
-	vec2 metallicRoughness = texture(metallicRoughnessTexture, uvFor(pcs.physicalDescriptorTextureSet)).bg;
+	vec2 metallicRoughness = texture(sampler2D(textures[TEX_METALLIC_ROUGHNESS_IDX], texSampler), uvFor(pcs.physicalDescriptorTextureSet)).bg;
 	float metallic	= metallicRoughness.x * pcs.metallicFactor;
 	float roughness	= metallicRoughness.y * pcs.roughnessFactor;
-	float ao		= texture(occlusionTexture, uvFor(pcs.occlusionTextureSet)).r;
-	vec3 emissive	= texture(emissiveTexture, uvFor(pcs.emissiveTextureSet)).rgb;
+	float ao		= texture(sampler2D(textures[TEX_OCCLUSION_IDX], texSampler), uvFor(pcs.occlusionTextureSet)).r;
+	vec3 emissive	= texture(sampler2D(textures[TEX_EMISSIVE_IDX], texSampler), uvFor(pcs.emissiveTextureSet)).rgb;
 
 	// 2 - Calculate Normal in tangent space
 	vec3 N = normalize(fragNormal);
 	if (pcs.normalTextureSet >= 0) {
-		vec3 tangentNormal = texture(normalTexture, uvFor(pcs.normalTextureSet)).xyz * 2.0 - 1.0;
+		vec3 tangentNormal = texture(sampler2D(textures[TEX_NORMAL_IDX], texSampler), uvFor(pcs.normalTextureSet)).xyz * 2.0 - 1.0;
 		vec3 T = normalize(fragTangent.xyz);
 		vec3 B = normalize(cross(N, T)) * fragTangent.w;
 		mat3 TBN = mat3(T, B, N);
