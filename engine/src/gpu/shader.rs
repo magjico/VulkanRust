@@ -81,7 +81,7 @@ pub fn create_storage_descriptor_set_layout(device: &Device) -> Result<vk::Descr
 // Shader pipeline and module
 //===========================================
 
-fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::ShaderModule> {
+pub fn create_shader_module(device: &Device, bytecode: &[u8]) -> Result<vk::ShaderModule> {
     let bytecode = Bytecode::new(bytecode).unwrap();
     let info = vk::ShaderModuleCreateInfo::builder()
         .code(bytecode.code())

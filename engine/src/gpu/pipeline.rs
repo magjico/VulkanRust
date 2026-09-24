@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use super::ShaderStagesBuilder;
+use super::{ShaderStagesBuilder, create_shader_module};
 use crate::scene::Vertex;
 use crate::render::PushConstants;
 
@@ -10,6 +10,12 @@ use crate::render::PushConstants;
 pub struct Pipeline {
     pub vk_pipeline: vk::Pipeline,
     pub vk_layout: vk::PipelineLayout,
+}
+
+#[derive(Debug)]
+pub struct ComputePipeline {
+	pub vk_pipeline: vk::Pipeline,
+    pub vk_layout: vk::PipelineLayout, 
 }
 
 impl Pipeline {
@@ -165,6 +171,49 @@ impl Pipeline {
     ///
     /// The caller must ensure the device is idle: the pipeline may still be bound by
     /// a command buffer awaiting execution.
+	#[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&self, device: &Device) {
+        device.destroy_pipeline(self.vk_pipeline, None);
+        device.destroy_pipeline_layout(self.vk_layout, None);
+    }
+}
+
+impl ComputePipeline {
+	pub fn new(
+		device: &Device,
+		compute_shader: &[u8],
+		set_layouts: &[vk::DescriptorSetLayout],
+	) -> Result<Self> {
+		let shader_module = create_shader_module(device, compute_shader)?;
+
+        let stage = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(shader_module)
+            .name(b"main\0");
+
+		let layout_info = vk::PipelineLayoutCreateInfo::builder()
+			.set_layouts(set_layouts);
+		let vk_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
+
+		let info = vk::ComputePipelineCreateInfo::builder()
+            .stage(stage)
+            .layout(vk_layout);
+
+        let vk_pipeline = unsafe { device
+			.create_compute_pipelines(vk::PipelineCache::null(), &[info], None)?
+			.0[0]
+		};
+
+		unsafe { device.destroy_shader_module(shader_module, None) };
+
+        Ok(Self { vk_pipeline, vk_layout })
+	}
+
+	/// Destroys the compute pipeline and its layout.
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure the device is idle.
 	#[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
         device.destroy_pipeline(self.vk_pipeline, None);

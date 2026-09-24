@@ -33,9 +33,7 @@ use crate::scene::{
 	SkinningBuffer,
 	InstanceBuffer,
 };
-use crate::setup::{
-	init_ecs_context,
-};
+use crate::setup::init_ecs_context;
 use crate::constants::{
 	DEVICE_EXTENSIONS,
 	INPUT_PATH,

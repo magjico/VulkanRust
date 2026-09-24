@@ -17,9 +17,11 @@ pub use device::QueueFamilyIndices;
 pub use shader::create_global_descriptor_set_layout;
 pub use shader::create_material_descriptor_set_layout;
 pub use shader::create_storage_descriptor_set_layout;
+pub use shader::create_shader_module;
 pub use shader::ShaderStagesBuilder;
 
 pub use pipeline::Pipeline;
+pub use pipeline::ComputePipeline;
 
 pub use instance::create_instance;
 

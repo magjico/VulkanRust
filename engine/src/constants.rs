@@ -61,6 +61,9 @@ pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSIO
 pub const VERT: &[u8] = include_bytes!("../shaders/hello_model/vert.spv");
 /// Frag shader
 pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
+/// Compute shader
+pub const COMP: &[u8] = include_bytes!("../shaders/hello_model/comp.spv");
+
 
 //==================================
 // Paths
