@@ -28,9 +28,7 @@ use crate::gpu::{
 };
 use crate::resources::{
 	GeometryBuffer,
-	create_command_pool,
 	create_command_pools,
-	create_setup_command_buffer,
 	create_command_buffers
 };
 use crate::type_safety::{
@@ -110,11 +108,9 @@ struct DrawItem {
 /// - `sorted_entities` ( Vec<[EntityInstance]> ) - Renderable entities sorted by model, so instances of the same model form contiguous ranges.
 #[derive(Debug)]
 pub struct CommandRecorder {
-	pub setup_pool:					vk::CommandPool,
     pub frames_pools:				Vec<vk::CommandPool>,
     pub primary_command_buffers:	Vec<vk::CommandBuffer>,
     pub secondary_command_buffers:	Vec<vk::CommandBuffer>,
-    pub setup_command_buffer:		vk::CommandBuffer,
 
     // Kept as fields and cleared rather than reallocated, so steady-state recording performs no heap allocation
     draw_list:			Vec<DrawItem>,
@@ -128,17 +124,13 @@ impl CommandRecorder {
 		queue_family_indices: &QueueFamilyIndices,
 		swapchain_images_count: usize,
 	) -> Result<Self> {
-		let setup_pool = create_command_pool(device, queue_family_indices)?;
 		let frames_pools = create_command_pools(device, queue_family_indices, swapchain_images_count)?;
-		let setup_command_buffer = create_setup_command_buffer(device, setup_pool)?;
 		let (primary_command_buffers, secondary_command_buffers) = create_command_buffers(device, &frames_pools)?;
 
 		Ok(Self {
-			setup_pool,
 			frames_pools,
 			primary_command_buffers,
 			secondary_command_buffers,
-			setup_command_buffer,
 
 			draw_list:			Vec::new(),
 			instance_data:		Vec::new(),
@@ -157,8 +149,6 @@ impl CommandRecorder {
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
 		self.frames_pools.iter().for_each(|c| device.destroy_command_pool(*c, None));
-		device.free_command_buffers(self.setup_pool, &[self.setup_command_buffer]);
-		device.destroy_command_pool(self.setup_pool, None);
 	}
 
     /// Records the primary command buffer for one frame.

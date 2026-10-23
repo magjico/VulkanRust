@@ -4,6 +4,22 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::gpu::get_memory_type_index;
 
+#[derive(Debug)]
+pub struct ImageResource {
+	pub vk_image: vk::Image,
+	pub vk_image_memory: vk::DeviceMemory,
+	pub vk_image_view: vk::ImageView,
+}
+
+impl ImageResource {
+	#[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn destroy(&self, device: &Device) {
+		device.destroy_image_view(self.vk_image_view, None);
+        device.free_memory(self.vk_image_memory, None);
+        device.destroy_image(self.vk_image, None);
+	}
+}
+
 /// Create an [`vk::Image`] and its attached [`vk::DeviceMemory`].
 /// 
 /// ## Arguments

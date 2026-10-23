@@ -85,77 +85,84 @@ pub fn create_command_buffers(
 
 //================================================
 // "setup" command buffer
-// (not to setup command buffer, but to create a special command buffer)
+// (not to setup command buffer, but to create a special command buffer used for copies and transitions at loading time.)
 //================================================
 
-/// Create a **setup command buffer** and return it.
-/// A **setup command buffer** is a command buffer use to submit commands from helper function
-/// asynchronously and without barriers (e.g. *create_texture_image()*)
-/// 
-/// ## Arguments
-/// 
-/// - `device` (&[`Device`]) - The vulkan application device.
-/// - `command_pool` ([`vk::CommandPool`]) - The commands pool to record commands inside the setup_command_buffer.
-/// 
-/// ## Returns
-/// 
-/// - Result<[`vk::CommandBuffer`]> - The command buffer to record commands of helpers function into.
-/// 
-/// ## Errors
-/// 
-/// Allocution error.
-pub fn create_setup_command_buffer(device: &Device, command_pool: vk::CommandPool) -> Result<vk::CommandBuffer> {
-    let info = vk::CommandBufferAllocateInfo::builder()
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_pool(command_pool)
-        .command_buffer_count(1);
-    
-    let command_buffer = unsafe { device.allocate_command_buffers(&info)?[0] };
-
-    Ok(command_buffer)
+/// Owns the command buffer used for one-off load-time work and the resources
+/// that must outlive its submission.
+///
+/// The whole context is consumed by [flush]: once loading is done, neither the pool
+/// nor the buffer serve any purpose.
+pub struct SetupCommand {
+    pub command_buffer: vk::CommandBuffer,
+    command_pool: vk::CommandPool,
+    delete_queue: Vec<Box<dyn FnOnce(&Device)>>,
 }
 
-/// Put a setup_command_buffer (see [`create_setup_command_buffer`]) into the *begin state*.
-/// So we can record commands into it, and them flush them using [`flush_setup_command_buffer`].
-/// 
-/// ## Arguments
-/// 
-/// - `device` (&[`Device`]) - The vulkan application device.
-/// - `setup_command_buffer` ([`vk::CommandBuffer`]).
-pub fn begin_setup_command_buffer(device: &Device, setup_command_buffer: vk::CommandBuffer) -> Result<()> {
-    let info = vk::CommandBufferBeginInfo::builder()
-		.flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+impl SetupCommand {
+    pub fn new(
+        device: &Device,
+        queue_family_index: u32,
+    ) -> Result<Self> {
+        let command_pool_info = vk::CommandPoolCreateInfo::builder()
+            .queue_family_index(queue_family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
 
-	unsafe {device.begin_command_buffer(setup_command_buffer, &info)?};
+        let info = vk::CommandBufferAllocateInfo::builder()
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_pool(command_pool)
+            .command_buffer_count(1);
+        let command_buffer = unsafe { device.allocate_command_buffers(&info)?[0] };
 
-    Ok(())
-}
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe { device.begin_command_buffer(command_buffer, &begin_info)? };
 
-/// Flush all commands from a setup_command_buffer (see [`create_setup_command_buffer`]).
-/// To records commands a setup_command_buffer must be in a begin state (see [`begin_setup_command_buffer`]).
-/// 
-/// ## Arguments
-/// 
-/// - `device` (&[`Device`]) - The vulkan application device.
-/// - `setup_command_buffer` ([`vk::CommandBuffer`]).
-/// - `graphics_queue` ([`vk::Queue`]) - The graphic queue to which we submit the commands.
-pub fn flush_setup_command_buffer(
-    device: &Device,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
-) -> Result<()> {
-    unsafe {device.end_command_buffer(setup_command_buffer)?};
-
-    let command_buffers = &[setup_command_buffer];
-	let info = vk::SubmitInfo::builder()
-		.command_buffers(command_buffers);
-
-    unsafe {
-        device.queue_submit(graphics_queue, &[info], vk::Fence::null())?;
-        device.queue_wait_idle(graphics_queue)?;
-
-        device.reset_command_buffer(setup_command_buffer, vk::CommandBufferResetFlags::empty())?;
+        Ok( Self {
+            command_buffer,
+            command_pool,
+            delete_queue: Vec::new()
+        })
     }
 
-    Ok(())
+    /// Queues a destruction to run once the setup work has completed.
+    #[inline]
+    pub fn defer(&mut self, f: impl FnOnce(&Device) + 'static) {
+        self.delete_queue.push(Box::new(f));
+    }
+
+    /// Submits the recorded work, waits for it, then destroys every deferred
+    /// resource along with the pool and buffer.
+    ///
+    /// Deletions run in reverse order of registration, so a resource can safely
+    /// depend on one queued before it.
+    ///
+    /// ## Safety
+    ///
+    /// No other work may still reference the resources recorded into this buffer.
+    pub fn flush(
+        mut self,
+        device: &Device,
+        queue: vk::Queue,
+    ) -> Result<()> {
+        unsafe { device.end_command_buffer(self.command_buffer)? };
+
+        let buffers = &[self.command_buffer];
+        let info = vk::SubmitInfo::builder()
+		    .command_buffers(buffers);
+
+        unsafe {
+            device.queue_submit(queue, &[info], vk::Fence::null())?;
+            device.queue_wait_idle(queue)?;
+
+            for f in self.delete_queue.drain(..).rev() {
+                f(device);
+            }
+
+            device.destroy_command_pool(self.command_pool, None);
+        }
+
+        Ok(())
+    }
 }

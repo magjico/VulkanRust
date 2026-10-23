@@ -10,15 +10,12 @@ use bevy_ecs::schedule::IntoScheduleConfigs;
 
 use crate::assets::load_model_with_offset;
 use crate::ops::SlotAllocator;
-use crate::gpu::ComputePipeline;
-use crate::resources::create_buffer;
+use crate::resources::SetupCommand;
 use crate::math::*;
 use crate::render::*;
 use crate::scene::*;
 use crate::constants::*;
 use crate::type_safety::*;
-
-use log::*;
 
 //===============================================
 // Bevy ECS World
@@ -62,8 +59,7 @@ pub fn load_gltf_models(
 	device: &Device,
 	instance: &Instance,
 	physical_device: vk::PhysicalDevice,
-	setup_command_buffer: vk::CommandBuffer,
-	graphics_queue: vk::Queue,
+	setup: &mut SetupCommand,
 	models: &mut ModelsStorage,
     textures: &mut TexturesStorage,
     model_registry: &mut ModelRegistry,
@@ -75,8 +71,7 @@ pub fn load_gltf_models(
             physical_device,
             model_path,
             model_key,
-            setup_command_buffer,
-            graphics_queue,
+            setup,
             models,
             textures,
             model_registry
@@ -159,8 +154,7 @@ pub fn create_default_texture(
     instance: &Instance,
     device: &Device,
     physical_device: vk::PhysicalDevice,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
 ) -> Result<TextureData> {
     // White Pixel 1x1 RGBA
     let pixels = [255u8, 255, 255, 255];
@@ -177,8 +171,7 @@ pub fn create_default_texture(
         instance,
         device,
         physical_device,
-        setup_command_buffer,
-        graphics_queue,
+        setup,
         extent,
         mip_levels,
         &pixels,

@@ -3,6 +3,7 @@ mod buffer;
 mod command;
 mod sync;
 
+pub use image::ImageResource;
 pub use image::create_image;
 pub use image::transition_image_layout;
 pub use image::get_supported_format;
@@ -21,8 +22,6 @@ pub use buffer::UniformBuffers;
 pub use command::create_command_pool;
 pub use command::create_command_pools;
 pub use command::create_command_buffers;
-pub use command::create_setup_command_buffer;
-pub use command::begin_setup_command_buffer;
-pub use command::flush_setup_command_buffer;
+pub use command::SetupCommand;
 
 pub use sync::FrameSync;

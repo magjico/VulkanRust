@@ -23,7 +23,8 @@ use crate::render::{
 use crate::resources::{
 	UniformBuffers,
 	GeometryBuffer,
-	FrameSync
+	FrameSync,
+	SetupCommand,
 };
 use crate::scene::{
 	Time,
@@ -208,6 +209,11 @@ impl Persistent {
 			swapchain_images_count
 		)?;
 
+		let mut setup = SetupCommand::new(
+			device,
+			gpu.queue_family_indices.get2(vk::QueueFlags::GRAPHICS)?
+		)?;
+
 		let mut models = ModelsStorage::new();
 		let mut textures = TexturesStorage::new();
 		let mut model_registry = ModelRegistry::new();
@@ -216,8 +222,7 @@ impl Persistent {
 			device,
 			instance,
 			gpu.physical_device,
-			command_recorder.setup_command_buffer,
-			gpu.graphics_queue,
+			&mut setup,
 			&mut models,
 			&mut textures,
 			&mut model_registry
@@ -229,8 +234,7 @@ impl Persistent {
 			instance,
 			device,
 			gpu.physical_device,
-			command_recorder.setup_command_buffer,
-			gpu.graphics_queue
+			&mut setup
 		)?;
 
 		let geometry_buffer = GeometryBuffer::new(
@@ -238,9 +242,10 @@ impl Persistent {
 			device,
 			gpu.physical_device,
 			&models,
-			command_recorder.setup_command_buffer,
-			gpu.graphics_queue
+			&mut setup,
 		)?;
+
+		setup.flush(device, gpu.graphics_queue)?;
 
 		let light_buffer = create_default_lighting(
 			instance,

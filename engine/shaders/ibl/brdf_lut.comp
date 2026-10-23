@@ -11,9 +11,11 @@
 // Heavily inspired by https://docs.rs/crate/viewport-lib/0.17.0/source/src/shaders/ibl_brdf_lut.wgsl
 #version 450
 
-const float PI = 3.14159265359;
+const float PI = 3.14159265358979;
 const uint  SAMPLE_COUNT = 1024u;
-const vec3 N = vec3(0, 0, 1);
+
+// https://registry.khronos.org/OpenGL-Refpages/gl4/html/gl_WorkGroupSize.xhtml
+layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(set = 0, binding = 0, rg16f) uniform writeonly image2D lut;
 
@@ -34,9 +36,9 @@ float RadicalInverse_VdC(uint bits)
 	* @param i: which point to generate
 	* @param n: how many points in total
 */
-vec2 Hammersley(uint i, uint N)
+vec2 Hammersley(uint i, uint n)
 {
-    return vec2(float(i)/float(N), RadicalInverse_VdC(i));
+    return vec2(float(i)/float(n), RadicalInverse_VdC(i));
 } 
 
 /*
@@ -101,7 +103,7 @@ vec2 integratedBRDF(float NdotV, float roughness)
 		}
 	}
 
-	return vec2(A_OUT, B_OUT) / SAMPLE_COUNT;
+	return vec2(A_OUT, B_OUT) / float(SAMPLE_COUNT);
 }
 
 void main()

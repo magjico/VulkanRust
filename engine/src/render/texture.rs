@@ -6,9 +6,12 @@ use anyhow::{Result, anyhow};
 use vulkanalia::prelude::v1_0::*;
 
 use crate::resources::{
-    create_image, create_image_view, transition_image_layout,
+    SetupCommand,
+    create_image,
+    create_image_view,
+    transition_image_layout,
     create_buffer,
-    begin_setup_command_buffer, flush_setup_command_buffer,
+    destroy_buffers,
 };
 use crate::ops::copy_buffer_to_image;
 use crate::type_safety::TextureId;
@@ -114,8 +117,7 @@ pub fn create_texture_image(
     instance: &Instance,
     device: &Device,
     physical_device: vk::PhysicalDevice,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
     texture_extent: vk::Extent3D,
     mip_levels: u32,
     pixels: &[u8],
@@ -159,11 +161,9 @@ pub fn create_texture_image(
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
 
-    begin_setup_command_buffer(device, setup_command_buffer)?;
-
 	transition_image_layout(
 		device,
-		setup_command_buffer,
+		setup.command_buffer,
 		texture_image,
 		vk::ImageLayout::UNDEFINED,
 		vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -172,7 +172,7 @@ pub fn create_texture_image(
 
 	copy_buffer_to_image(
 		device,
-		setup_command_buffer,
+		setup.command_buffer,
 		staging_buffer,
 		texture_image,
 		texture_extent.width,
@@ -183,20 +183,17 @@ pub fn create_texture_image(
 		instance,
 		device,
 		physical_device,
-        setup_command_buffer,
+        setup.command_buffer,
 		texture_image,
-		vk::Format::R8G8B8A8_SRGB,
+		format,
 		texture_extent.width,
 		texture_extent.height, 
 		mip_levels
 	)?;
 
-    flush_setup_command_buffer(device, setup_command_buffer, graphics_queue)?;
-
-    unsafe {
-        device.destroy_buffer(staging_buffer, None);
-        device.free_memory(staging_buffer_memory, None);
-    }
+    setup.defer(move |d| {
+        destroy_buffers(d, &[staging_buffer], &[staging_buffer_memory]);
+    });
 
 	Ok((texture_image, texture_image_memory))
 }

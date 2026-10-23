@@ -2,26 +2,10 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::resources::{create_image, create_image_view, get_supported_format};
+use crate::resources::{ImageResource, create_image, create_image_view, get_supported_format};
 
 #[derive(Debug)]
-pub struct AttachmentImage {
-	pub vk_image: vk::Image,
-	pub vk_image_memory: vk::DeviceMemory,
-	pub vk_image_view: vk::ImageView,
-}
-
-impl AttachmentImage {
-	#[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn destroy(&self, device: &Device) {
-		device.destroy_image_view(self.vk_image_view, None);
-        device.free_memory(self.vk_image_memory, None);
-        device.destroy_image(self.vk_image, None);
-	}
-}
-
-#[derive(Debug)]
-pub struct ColorAttachment(AttachmentImage);
+pub struct ColorAttachment(ImageResource);
 
 impl ColorAttachment {
 	/// Create a 3-color attachment:
@@ -65,7 +49,7 @@ impl ColorAttachment {
 			1
 		)?;
 
-		Ok(Self(AttachmentImage {
+		Ok(Self(ImageResource {
 				vk_image,
 				vk_image_memory,
 				vk_image_view
@@ -83,12 +67,12 @@ impl ColorAttachment {
 	}
 
 	#[inline]
-	pub fn attachment(&self) -> &AttachmentImage { &self.0 }
+	pub fn attachment(&self) -> &ImageResource { &self.0 }
 }
 
 #[derive(Debug)]
 pub struct DepthAttachment {
-	pub attachment: AttachmentImage,
+	pub attachment: ImageResource,
 	pub vk_format: vk::Format,
 }
 
@@ -129,7 +113,7 @@ impl DepthAttachment {
     	let vk_image_view = create_image_view(device, vk_image, vk_format, vk::ImageAspectFlags::DEPTH, 1)?;
 
 		Ok(Self {
-			attachment: AttachmentImage { vk_image, vk_image_memory, vk_image_view },
+			attachment: ImageResource { vk_image, vk_image_memory, vk_image_view },
 			vk_format
 		})
 	}

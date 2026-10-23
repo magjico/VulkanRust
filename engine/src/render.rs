@@ -4,6 +4,7 @@ mod swapchain;
 mod recorder;
 mod attachment;
 mod descriptor;
+mod ibl;
 
 pub use texture::create_texture_image;
 pub use texture::create_texture_sampler;
@@ -28,3 +29,5 @@ pub use attachment::DepthAttachment;
 
 pub use descriptor::DescriptorLayouts;
 pub use descriptor::Descriptors;
+
+pub use ibl::BRDFLut;

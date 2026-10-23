@@ -12,7 +12,7 @@ use crate::render::UniformBufferObject;
 use crate::scene::{Vertex, ModelsStorage};
 use crate::type_safety::{MeshOffset, ModelId, NodeId};
 
-use super::{begin_setup_command_buffer, flush_setup_command_buffer};
+use super::SetupCommand;
 
 //================================================
 // Buffers (general)
@@ -76,10 +76,7 @@ pub fn copy_buffers(
     setup_command_buffer: vk::CommandBuffer,
     sizes: &[vk::DeviceSize],
     dst_offsets: &[vk::DeviceSize],
-    graphics_queue: vk::Queue,
 ) -> Result<()> {
-    begin_setup_command_buffer(device, setup_command_buffer)?;
-
     // Commands
     let mut src_offset = 0;
     let mut regions = Vec::<vk::BufferCopy>::with_capacity(sizes.len());
@@ -96,8 +93,6 @@ pub fn copy_buffers(
         src_offset += size;
     }
     unsafe { device.cmd_copy_buffer(setup_command_buffer, source, destination, &regions) };
-
-    flush_setup_command_buffer(device, setup_command_buffer, graphics_queue)?;
 
     Ok(())
 }
@@ -181,8 +176,7 @@ pub fn create_interleaved_buffer(
     physical_device: vk::PhysicalDevice,
     vertices: &[Vertex],
     indices: &[u32],
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
 ) -> Result<(vk::Buffer, vk::DeviceMemory, u64)> {
     let vertex_size = size_of_val(vertices) as u64;
     let index_size = size_of_val(indices) as u64;
@@ -225,14 +219,15 @@ pub fn create_interleaved_buffer(
         device,
         staging_buffer,
         interleaved_buffer,
-        setup_command_buffer,
+        setup.command_buffer,
         &[vertex_size, index_size],
         &[0, aligned_vertex_size],
-        graphics_queue,
     )?;
 
-    // Cleanup
-    destroy_buffers(device, &[staging_buffer], &[staging_buffer_memory]);
+    // Defered Cleanup
+    setup.defer(move |d| {
+        destroy_buffers(d, &[staging_buffer], &[staging_buffer_memory]);
+    });
 
     Ok((interleaved_buffer, interleaved_buffer_memory, aligned_vertex_size))
 }
@@ -348,8 +343,7 @@ impl GeometryBuffer {
 		device:					&Device,
 		physical_device:		vk::PhysicalDevice,
 		models:					&ModelsStorage,
-		setup_command_buffer:	vk::CommandBuffer,
-		graphics_queue:			vk::Queue
+		setup:                  &mut SetupCommand,
 	) -> Result<Self> {
 		let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -377,8 +371,7 @@ impl GeometryBuffer {
             physical_device,
             &vertices,
             &indices,
-            setup_command_buffer,
-            graphics_queue,
+            setup,
         )?;
 
 		Ok(Self {

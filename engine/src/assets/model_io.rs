@@ -20,6 +20,7 @@ use gltf::animation::{Interpolation, Property};
 
 use vulkanalia::prelude::v1_0::*;
 
+use crate::resources::SetupCommand;
 use crate::ops::{FlatGraph, Node};
 use crate::type_safety::{NodeId, MaterialId, TextureId, SamplerId};
 use crate::math::*;
@@ -48,8 +49,7 @@ pub fn load_texture(
     device: &Device,
     physical_device: vk::PhysicalDevice,
     texture_path: &str,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
 ) -> Result<(vk::Image, vk::DeviceMemory, u32)> {
     let image = File::open(texture_path)?;
 
@@ -69,8 +69,7 @@ pub fn load_texture(
         instance,
         device,
         physical_device,
-        setup_command_buffer,
-        graphics_queue,
+        setup,
         vk::Extent3D {width, height, depth: 1}, 
         mip_levels,
         &pixels,
@@ -162,8 +161,7 @@ pub fn load_3d_content(
     physical_device: vk::PhysicalDevice,
     obj_path: &str,
     texture_path: &str,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
 ) -> Result<(Mesh, TextureData)> {
     let mesh = load_obj_model(obj_path)?;
     let (texture_image, texture_image_memory, mip_levels) = load_texture(
@@ -171,8 +169,7 @@ pub fn load_3d_content(
         device,
         physical_device,
         texture_path,
-        setup_command_buffer,
-        graphics_queue
+        setup,
     )?;
 
     let texture_image_view = create_texture_image_view(device, texture_image, mip_levels)?;
@@ -290,8 +287,7 @@ fn load_gltf_textures(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
     textures: iter::Textures,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
     buffers: &[Data],
     base_dir: &Path
 ) -> Result<Vec<TextureData>> {
@@ -346,8 +342,7 @@ fn load_gltf_textures(
             instance,
             device,
             physical_device,
-            setup_command_buffer,
-            graphics_queue,
+            setup,
             extent,
             mip_levels,
             &pixels,
@@ -576,8 +571,7 @@ pub fn load_gltf_model(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
     path: &str,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
 ) -> Result<(ModelGraph, Vec<TextureData>)> {
     info!("loading model: {:?}", path);
 
@@ -592,8 +586,7 @@ pub fn load_gltf_model(
         instance,
         physical_device,
         document.textures(),
-        setup_command_buffer,
-        graphics_queue,
+        setup,
         &buffers,
         base_dir
     )?;
@@ -761,14 +754,13 @@ pub fn load_model_with_offset(
     physical_device: vk::PhysicalDevice,
     path: &str,
     name: &str,
-    setup_command_buffer: vk::CommandBuffer,
-    graphics_queue: vk::Queue,
+    setup: &mut SetupCommand,
     models: &mut ModelsStorage,
     textures: &mut TexturesStorage,
     registry: &mut ModelRegistry,
 ) -> Result<()> {
     let (mut model_graph, model_textures) = load_gltf_model(
-        device, instance, physical_device, path, setup_command_buffer, graphics_queue,
+        device, instance, physical_device, path, setup,
     )?;
 
     let texture_id = register_model_textures(textures, &mut model_graph, model_textures);

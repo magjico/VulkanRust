@@ -33,6 +33,8 @@ pub const FRAME_STRIDE: usize = (MAX_INSTANCES * MAX_JOINT_PER_INSTANCE) as usiz
 pub const MAX_TOTAL_JOINTS: usize = FRAME_STRIDE * MAX_FRAMES_IN_FLIGHT;
 /// Total instance data capacity, duplicated per frame in flight for the same reason.
 pub const MAX_INSTANCES_DATA: usize = MAX_INSTANCES as usize * MAX_FRAMES_IN_FLIGHT;
+/// BRDF LUT texture resolution (512x512) texels.
+pub const BRDF_LUT_SIZE: u32 = 512;
 
 //==================================
 // Info Consts
