@@ -29,5 +29,6 @@ pub use attachment::DepthAttachment;
 
 pub use descriptor::DescriptorLayouts;
 pub use descriptor::Descriptors;
+pub use descriptor::create_storage_image_descriptor_set;
 
 pub use ibl::BRDFLut;

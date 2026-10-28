@@ -448,4 +448,33 @@ fn create_storage_descriptor_set(
 
     Ok(descriptor_set)
 }
+
+pub fn create_storage_image_descriptor_set(
+    device:             &Device,
+    descriptor_layout:  vk::DescriptorSetLayout,
+    descriptor_pool:    vk::DescriptorPool,
+    image_view:         vk::ImageView,
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[descriptor_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let image_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(image_view)
+    ];
+
+    let write = vk::WriteDescriptorSet::builder()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+        .image_info(image_info);
+
+    unsafe { device.update_descriptor_sets(&[write], &[] as &[vk::CopyDescriptorSet]) };
+    Ok(descriptor_set)
+}
 // endregion

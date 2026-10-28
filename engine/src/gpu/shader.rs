@@ -77,6 +77,21 @@ pub fn create_storage_descriptor_set_layout(device: &Device) -> Result<vk::Descr
     Ok(descriptor_set_layout)
 }
 
+pub fn create_storage_image_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::COMPUTE);
+
+    let bindings = &[binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+}
+
 //===========================================
 // Shader pipeline and module
 //===========================================
