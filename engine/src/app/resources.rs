@@ -18,6 +18,7 @@ use crate::render::{
 	Swapchain,
 	TextureData,
 	TexturesStorage,
+	BRDFLut,
 	create_texture_sampler,
 };
 use crate::resources::{
@@ -162,6 +163,7 @@ pub struct Persistent {
 	pub descriptor_layouts:		DescriptorLayouts,
 	pub descriptors:			Descriptors,
 	pub graphic_pipeline:		Pipeline,
+	pub brdf_lut:				BRDFLut,
 	pub uniform_buffers:		UniformBuffers,
 	pub command_recorder:		CommandRecorder,
 	pub geometry_buffer:		GeometryBuffer,
@@ -245,6 +247,13 @@ impl Persistent {
 			&mut setup,
 		)?;
 
+		let brdf_lut = BRDFLut::new(
+			instance,
+			device,
+			gpu.physical_device
+		)?;
+		brdf_lut.generate(device, &mut setup)?;
+
 		setup.flush(device, gpu.graphics_queue)?;
 
 		let light_buffer = create_default_lighting(
@@ -292,6 +301,7 @@ impl Persistent {
 			descriptor_layouts,
 			descriptors,
 			graphic_pipeline,
+			brdf_lut,
 			uniform_buffers,
 			command_recorder,
 			geometry_buffer,
@@ -312,6 +322,7 @@ impl Persistent {
     pub unsafe fn destroy(&self, device: &Device) {
 		self.uniform_buffers.destroy(device);
 		self.graphic_pipeline.destroy(device);
+		self.brdf_lut.destroy(device);
 		self.textures.destroy(device);
 		device.destroy_sampler(self.texture_sampler, None);
 		self.default_texture.destroy(device);
