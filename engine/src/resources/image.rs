@@ -20,93 +20,126 @@ impl ImageResource {
 	}
 }
 
-/// Create an [`vk::Image`] and its attached [`vk::DeviceMemory`].
-/// 
-/// ## Arguments
-/// 
-/// - `instance` (&[`Instance`]) - Vulkan instance.
-/// - `device` (&[`Device`]) - Vulkan device.
-/// - `physical_device` ([`vk::PhysicalDevice`]) - GPU.
-/// - `extent` ( [vk::Extent3D] ) - image extent (width, height and depth). If the texture is 2D then depth value should be 1.
-/// - `mip_levels` (`u32`) - image mip levels (usualy 1 except for texture).
-/// - `samples` ([`vk::SampleCountFlags`]) - sampling count (flags) for aliasing.
-/// - `format` ([`vk::Format`]) - image format.
-/// - `tiling` ([`vk::ImageTiling`]) - image tiling.
-/// - `usage` ([`vk::ImageUsageFlags`]) - Describe the futur usages of this image (for example COLOR_ATTACHMENT).
-/// - `properties` ([`vk::MemoryPropertyFlags`]) - Memory property of the device memory of this image.
-/// 
-/// ## Returns
-/// 
-/// - `Result<(vk::Image, vk::DeviceMemory)>`.
-/// 
-/// ## Examples
-/// 
-/// ```
-/// use crate::resources::create_image;
-/// 
-/// let (color_image, color_image_memory) = create_image(
-///     instance,
-///     device,
-///     physical_device,
-///     swapchain_extent.width,
-///     swapchain_extent.height,
-///     1,
-///     vk::SampleCountFlags::_64, 
-///     vk::Format::B8G8R8A8_SRGB,
-///     vk::ImageTiling::OPTIMAL,
-///     vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-///     vk::MemoryPropertyFlags::DEVICE_LOCAL
-/// )?;
-/// ```
-pub fn create_image(
-	instance: &Instance,
-	device: &Device,
-	physical_device: vk::PhysicalDevice,
-	extent: vk::Extent3D,
-    mip_levels: u32,
-	samples: vk::SampleCountFlags,
-	format: vk::Format,
-	tiling: vk::ImageTiling,
-	usage: vk::ImageUsageFlags,
-	properties: vk::MemoryPropertyFlags,
-) -> Result<(vk::Image, vk::DeviceMemory)> {
-	// TODO: manage the 1D texture case.
-	let image_type = if extent.depth > 1 {
-		vk::ImageType::_3D
-	} else  {
-		vk::ImageType::_2D
-	};
+/// Builder for [vk::Image] creation, with the defaults most images use.
+#[derive(Debug)]
+pub struct ImageBuilder {
+	extent:			vk::Extent3D,
+    format:			vk::Format,
+    usage:			vk::ImageUsageFlags,
+    mip_levels:		u32,
+    array_layers:	u32,
+    samples:		vk::SampleCountFlags,
+    tiling:			vk::ImageTiling,
+    properties:		vk::MemoryPropertyFlags,
+    flags:			vk::ImageCreateFlags,
+}
 
-	let info = vk::ImageCreateInfo::builder()
-		.image_type(image_type)
-		.extent(extent)
-		.mip_levels(mip_levels)
-		.array_layers(1)
-		.format(format)
-		.tiling(tiling)
-		.initial_layout(vk::ImageLayout::UNDEFINED)
-		.usage(usage)
-		.sharing_mode(vk::SharingMode::EXCLUSIVE)
-		.samples(samples)
-		.flags(vk::ImageCreateFlags::empty());
+impl ImageBuilder {
+	pub fn new(
+		extent: vk::Extent3D,
+		format: vk::Format,
+		usage: vk::ImageUsageFlags
+	) -> Self {
+		Self {
+            extent,
+            format,
+            usage,
+            mip_levels:		1,
+            array_layers:	1,
+            samples:		vk::SampleCountFlags::_1,
+            tiling:			vk::ImageTiling::OPTIMAL,
+            properties:		vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            flags:			vk::ImageCreateFlags::empty(),
+        }
+	}
 
-    unsafe {
-        let image = device.create_image(&info, None)?;
-        let requirements = device.get_image_memory_requirements(image);
+	#[inline]
+	pub fn mip_levels(mut self, mip_levels: u32) -> Self {
+		self.mip_levels = mip_levels;
+		self
+	}
 
-        let info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(requirements.size)
-            .memory_type_index(get_memory_type_index(
-                instance,
-                physical_device,
-                properties,
-                requirements
-            )?);
-        
-        let image_memory = device.allocate_memory(&info, None)?;
-        device.bind_image_memory(image, image_memory, 0)?;
-        Ok((image, image_memory))
-    }
+	#[inline]
+	pub fn samples(mut self, samples: vk::SampleCountFlags) -> Self {
+		self.samples = samples;
+		self
+	}
+
+	#[inline]
+	pub fn cube(mut self) -> Self {
+		self.array_layers = 6;
+		self.flags |= vk::ImageCreateFlags::CUBE_COMPATIBLE;
+		self
+	}
+
+	/// Build a [`vk::Image`] and its attached [`vk::DeviceMemory`].
+	/// 
+	/// ## Arguments
+	/// 
+	/// - `instance` (&[`Instance`]) - Vulkan instance.
+	/// - `device` (&[`Device`]) - Vulkan device.
+	/// - `physical_device` ([`vk::PhysicalDevice`]) - GPU.
+	/// 
+	/// ## Returns
+	/// 
+	/// - `Result<(vk::Image, vk::DeviceMemory)>`.
+	/// 
+	/// ## Examples
+	/// 
+	/// ```
+	/// use crate::resources::create_image;
+	/// 
+	/// let (color_image, color_image_memory) = ImageBuilder::new()
+	/// 	.build(
+	///     	instance,
+	///     	device,
+	///     	physical_device,
+	///		)?;
+	/// ```
+	pub fn build(
+		self,
+		instance: &Instance,
+		device: &Device,
+		physical_device: vk::PhysicalDevice,
+	) -> Result<(vk::Image, vk::DeviceMemory)> {
+		// TODO: manage the 1D texture case.
+		let image_type = if self.extent.depth > 1 {
+			vk::ImageType::_3D
+		} else  {
+			vk::ImageType::_2D
+		};
+
+		let info = vk::ImageCreateInfo::builder()
+			.image_type(image_type)
+			.extent(self.extent)
+			.mip_levels(self.mip_levels)
+			.array_layers(self.array_layers)
+			.format(self.format)
+			.tiling(self.tiling)
+			.initial_layout(vk::ImageLayout::UNDEFINED)
+			.usage(self.usage)
+			.sharing_mode(vk::SharingMode::EXCLUSIVE)
+			.samples(self.samples)
+			.flags(self.flags);
+
+		unsafe {
+			let image = device.create_image(&info, None)?;
+			let requirements = device.get_image_memory_requirements(image);
+
+			let info = vk::MemoryAllocateInfo::builder()
+				.allocation_size(requirements.size)
+				.memory_type_index(get_memory_type_index(
+					instance,
+					physical_device,
+					self.properties,
+					requirements
+				)?);
+			
+			let image_memory = device.allocate_memory(&info, None)?;
+			device.bind_image_memory(image, image_memory, 0)?;
+			Ok((image, image_memory))
+		}
+	}
 }
 
 /// Change an image layout state for GPU synchronization.
@@ -215,18 +248,20 @@ pub fn create_image_view(
     image: vk::Image,
     format: vk::Format,
     aspect: vk::ImageAspectFlags,
+	view_type: vk::ImageViewType,
     mip_levels: u32,
+	layer_count: u32,
 ) -> Result<vk::ImageView> {
     let subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(aspect)
         .base_mip_level(0)
         .level_count(mip_levels)
         .base_array_layer(0)
-        .layer_count(1);
+        .layer_count(layer_count);
 
     let info = vk::ImageViewCreateInfo::builder()
         .image(image)
-        .view_type(vk::ImageViewType::_2D)
+        .view_type(view_type)
         .format(format)
         .subresource_range(subresource_range);
 

@@ -18,6 +18,7 @@ pub use shader::create_global_descriptor_set_layout;
 pub use shader::create_material_descriptor_set_layout;
 pub use shader::create_storage_descriptor_set_layout;
 pub use shader::create_storage_image_descriptor_set_layout;
+pub use shader::create_image_to_image_descriptor_set_layout;
 pub use shader::create_shader_module;
 pub use shader::ShaderStagesBuilder;
 

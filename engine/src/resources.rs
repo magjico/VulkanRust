@@ -4,7 +4,7 @@ mod command;
 mod sync;
 
 pub use image::ImageResource;
-pub use image::create_image;
+pub use image::ImageBuilder;
 pub use image::transition_image_layout;
 pub use image::get_supported_format;
 pub use image::create_image_view;

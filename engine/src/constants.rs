@@ -35,6 +35,8 @@ pub const MAX_TOTAL_JOINTS: usize = FRAME_STRIDE * MAX_FRAMES_IN_FLIGHT;
 pub const MAX_INSTANCES_DATA: usize = MAX_INSTANCES as usize * MAX_FRAMES_IN_FLIGHT;
 /// BRDF LUT texture resolution (512x512) texels.
 pub const BRDF_LUT_SIZE: u32 = 512;
+/// Resolution of 1 cubemap face
+pub const ENV_CUBEMAP_SIZE: u32 = 1024;
 
 //==================================
 // Info Consts
@@ -63,9 +65,10 @@ pub const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSIO
 pub const VERT: &[u8] = include_bytes!("../shaders/hello_model/vert.spv");
 /// Frag shader
 pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
-/// Compute shaders
+/// Compute BRDF LUT shader
 pub const BRDF_LUT_COMP: &[u8] = include_bytes!("../shaders/ibl/brdf_lut.spv");
-
+/// Compute Equirect HDR to Cubemap shader
+pub const EQUIRECT_TO_CUBEMAP_COMP: &[u8] = include_bytes!("../shaders/ibl/equirect_to_cubemap.spv");
 
 //==================================
 // Paths
@@ -96,5 +99,8 @@ pub const MODEL_INFO: [(&str, &str); 2] = [
     (BRAIN_STEM_PATH, BRAIN_STEM_KEY)
 ];
 
-// 3 - Inputs
+// 3 - HDR
+pub const HDR_ENV_PATH: &str = "resources/HDRIs/alps_field_4k.exr"; 
+
+// 4 - Inputs
 pub const INPUT_PATH: &str = "config/input.toml";

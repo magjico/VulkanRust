@@ -19,6 +19,7 @@ use crate::render::{
 	TextureData,
 	TexturesStorage,
 	BRDFLut,
+	EnvironmentCubemap,
 	create_texture_sampler,
 };
 use crate::resources::{
@@ -40,6 +41,7 @@ use crate::constants::{
 	VERT,
 	FRAG,
 	MAX_FRAMES_IN_FLIGHT,
+	ENV_CUBEMAP_SIZE,
 };
 use crate::setup::{
 	load_gltf_models,
@@ -47,6 +49,7 @@ use crate::setup::{
 	create_default_lighting,
 	spawn_from_cesium_man_instances,
 	spawn_from_brain_stem_instance,
+	load_alps_environment,
 };
 
 /// Resources whose lifetime is tied to the swapchain.
@@ -127,11 +130,11 @@ impl SwapchainDependant {
 	#[rustfmt::skip]
 	pub fn recreate(
 		&mut self,
-		window: 			&Window,
-		device:				&Device,
-		instance:			&Instance,
-		surface:			vk::SurfaceKHR,
-		gpu:				&mut GPUContext,
+		window: 	&Window,
+		device:		&Device,
+		instance:	&Instance,
+		surface:	vk::SurfaceKHR,
+		gpu:		&mut GPUContext,
 	) -> Result<()> {
 		unsafe { self.destroy(device) };
 		*self = Self::new(window, instance, device, gpu, surface)?;
@@ -164,6 +167,7 @@ pub struct Persistent {
 	pub descriptors:			Descriptors,
 	pub graphic_pipeline:		Pipeline,
 	pub brdf_lut:				BRDFLut,
+	pub env_cubemap:			EnvironmentCubemap,
 	pub uniform_buffers:		UniformBuffers,
 	pub command_recorder:		CommandRecorder,
 	pub geometry_buffer:		GeometryBuffer,
@@ -254,6 +258,22 @@ impl Persistent {
 		)?;
 		brdf_lut.generate(device, &mut setup)?;
 
+		let sky_env = load_alps_environment()?;
+		let env_cubemap = EnvironmentCubemap::new(
+			instance,
+			device,
+			gpu.physical_device,
+			ENV_CUBEMAP_SIZE,
+		)?;
+		env_cubemap.generate(
+			instance,
+			device,
+			gpu.physical_device,
+			&mut setup,
+			&sky_env,
+			texture_sampler
+		)?;
+
 		setup.flush(device, gpu.graphics_queue)?;
 
 		let light_buffer = create_default_lighting(
@@ -302,6 +322,7 @@ impl Persistent {
 			descriptors,
 			graphic_pipeline,
 			brdf_lut,
+			env_cubemap,
 			uniform_buffers,
 			command_recorder,
 			geometry_buffer,
@@ -322,6 +343,7 @@ impl Persistent {
     pub unsafe fn destroy(&self, device: &Device) {
 		self.uniform_buffers.destroy(device);
 		self.graphic_pipeline.destroy(device);
+		self.env_cubemap.destroy(device);
 		self.brdf_lut.destroy(device);
 		self.textures.destroy(device);
 		device.destroy_sampler(self.texture_sampler, None);

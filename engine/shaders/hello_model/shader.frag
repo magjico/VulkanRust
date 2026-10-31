@@ -47,7 +47,7 @@ layout(push_constant) uniform PushConstants {
     int emissiveTextureSet;						// Texture coordinate set for emission							(offset 116)
 	float alphaMask;							// Whether to use alpha masking									(offset 120)
     float alphaMaskCutoff;						// Alpha threshold for masking									(offset 124)
-	// Total: 116 bytes / 128 bytes used (112 + 4).
+	// Total: 128 bytes / 128 bytes used.
 } pcs;
 
 // Take a look at the out vector inside shader.vert
@@ -237,7 +237,7 @@ void main()
 		vec3 L = toLight / dist;
 
 		// not computing unseen elements
-		float NdotL = max(dot(N, L), 0.0);
+		float NdotL = dot(N, L);
 		if (NdotL <= 0) continue; 
 
 		float attenuation 	= dist * dist;
@@ -265,7 +265,7 @@ void main()
 	}
 
 	vec3 ambient = vec3(0.03) * baseColor.rgb * ao;
-	vec3 color = ambient + Lo; // + emissive;
+	vec3 color = ambient + Lo + emissive;
 	color = ACESFilm(color * ubo.exposure);
 
     outColor = vec4(color, baseColor.a);

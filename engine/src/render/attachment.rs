@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::resources::{ImageResource, create_image, create_image_view, get_supported_format};
+use crate::resources::{ImageResource, ImageBuilder, create_image_view, get_supported_format};
 
 #[derive(Debug)]
 pub struct ColorAttachment(ImageResource);
@@ -28,25 +28,22 @@ impl ColorAttachment {
         samples_count: vk::SampleCountFlags,
         vk_format: vk::Format,  
 	) -> Result<Self> {
-		let (vk_image, vk_image_memory) = create_image(
-			instance,
-			device,
-			physical_device,
-			vk::Extent3D { width: extent_width, height: extent_height, depth: 1},
-			1,
-			samples_count, 
-			vk_format,
-			vk::ImageTiling::OPTIMAL,
-			vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-			vk::MemoryPropertyFlags::DEVICE_LOCAL
-		)?;
+		let (vk_image, vk_image_memory) = ImageBuilder::new(
+				vk::Extent3D { width: extent_width, height: extent_height, depth: 1},
+				vk_format,
+				vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+			)
+			.samples(samples_count)
+			.build(instance, device, physical_device)?;
 
 		let vk_image_view = create_image_view(
 			device,
 			vk_image,
 			vk_format,
 			vk::ImageAspectFlags::COLOR,
-			1
+			vk::ImageViewType::_2D,
+			1,
+			1,
 		)?;
 
 		Ok(Self(ImageResource {
@@ -97,20 +94,23 @@ impl DepthAttachment {
 	) -> Result<Self> {
 		let vk_format = DepthAttachment::get_depth_format(instance, physical_device)?;
 
-		let (vk_image, vk_image_memory) = create_image(
-			instance,
-			device,
-			physical_device,
-			vk::Extent3D { width: extent_width, height: extent_height, depth: 1 },
-			1,
-			samples_count,
-			vk_format,
-			vk::ImageTiling::OPTIMAL,
-			vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			vk::MemoryPropertyFlags::DEVICE_LOCAL
-		)?;
+		let (vk_image, vk_image_memory) = ImageBuilder::new(
+				vk::Extent3D { width: extent_width, height: extent_height, depth: 1 },
+				vk_format,
+				vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+			)
+			.samples(samples_count)
+			.build(instance, device, physical_device)?;
 
-    	let vk_image_view = create_image_view(device, vk_image, vk_format, vk::ImageAspectFlags::DEPTH, 1)?;
+    	let vk_image_view = create_image_view(
+			device,
+			vk_image,
+			vk_format,
+			vk::ImageAspectFlags::DEPTH,
+			vk::ImageViewType::_2D,
+			1,
+			1,
+		)?;
 
 		Ok(Self {
 			attachment: ImageResource { vk_image, vk_image_memory, vk_image_view },

@@ -477,4 +477,56 @@ pub fn create_storage_image_descriptor_set(
     unsafe { device.update_descriptor_sets(&[write], &[] as &[vk::CopyDescriptorSet]) };
     Ok(descriptor_set)
 }
+
+pub fn create_image_to_image_descriptor_set(
+    device:             &Device,
+    descriptor_layout:  vk::DescriptorSetLayout,
+    descriptor_pool:    vk::DescriptorPool,
+    image_src_view:     vk::ImageView,
+    image_sampler:      vk::Sampler,
+    image_view:         vk::ImageView,
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[descriptor_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let img_src_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(image_src_view)
+    ];
+    let sampler_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .sampler(image_sampler)
+    ];
+    let img_dst_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(image_view)
+    ];
+
+    let writes = &[
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(img_src_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .image_info(sampler_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(2)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(img_dst_info),
+    ];
+
+    unsafe { device.update_descriptor_sets(writes, &[] as &[vk::CopyDescriptorSet]) };
+    Ok(descriptor_set)
+}
 // endregion

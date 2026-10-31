@@ -11,8 +11,10 @@ docs/graphic_computing_help/
 # Model
 *.glb
 *.gltf
+*.exr
 
 # 3D
 engine/resources/textures/
 engine/resources/3D_meshes/
 engine/resources/glb/
+engine/resources/HDRIs/

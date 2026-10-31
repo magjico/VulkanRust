@@ -4,7 +4,7 @@ use vulkanalia::bytecode::Bytecode;
 use vulkanalia::prelude::v1_0::*;
 // TODO: check refactor
 //===========================================
-// Descriptor Set
+// Descriptor Set Layout
 //===========================================
 
 /// create **UBO** descriptor set layout.
@@ -89,6 +89,33 @@ pub fn create_storage_image_descriptor_set_layout(device: &Device) -> Result<vk:
         .bindings(bindings);
 
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+}
+
+pub fn create_image_to_image_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let src_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::COMPUTE);
+
+    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_type(vk::DescriptorType::SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::COMPUTE);
+
+    let dest_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(2)
+        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::COMPUTE);
+
+    let bindings = &[src_binding, sampler_binding, dest_binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout =  unsafe { device.create_descriptor_set_layout(&info, None)? };
     Ok(descriptor_set_layout)
 }
 

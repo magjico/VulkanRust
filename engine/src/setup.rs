@@ -8,7 +8,11 @@ use vulkanalia::prelude::v1_0::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 
-use crate::assets::load_model_with_offset;
+use crate::assets::{
+    EquirectImage,
+    load_model_with_offset,
+    load_equirect_exr,
+};
 use crate::ops::SlotAllocator;
 use crate::resources::SetupCommand;
 use crate::math::*;
@@ -145,6 +149,14 @@ pub fn spawn_from_brain_stem_instance(
     Ok(entities)
 }
 
+//===============================================
+// Environment Cubemap
+//===============================================
+
+#[inline]
+pub fn load_alps_environment() -> Result<EquirectImage> {
+    load_equirect_exr(HDR_ENV_PATH)
+}
 
 //===============================================
 // defaults

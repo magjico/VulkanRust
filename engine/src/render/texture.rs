@@ -7,7 +7,7 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::resources::{
     SetupCommand,
-    create_image,
+    ImageBuilder,
     create_image_view,
     transition_image_layout,
     create_buffer,
@@ -146,20 +146,15 @@ pub fn create_texture_image(
         device.unmap_memory(staging_buffer_memory);
     }
 
-	let (texture_image, texture_image_memory) = create_image(
-        instance,
-        device,
-        physical_device,
-        texture_extent,
-        mip_levels,
-		vk::SampleCountFlags::_1,
-        format,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::SAMPLED
-            | vk::ImageUsageFlags::TRANSFER_DST
-            | vk::ImageUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    )?;
+	let (texture_image, texture_image_memory) = ImageBuilder::new(
+            texture_extent,
+            format,
+            vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::TRANSFER_SRC,
+        )
+        .mip_levels(mip_levels)
+        .build(instance, device, physical_device)?;
 
 	transition_image_layout(
 		device,
@@ -219,7 +214,9 @@ pub fn create_texture_image_view(
         texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
+        vk::ImageViewType::_2D,
         mip_levels,
+        1,
     )?;
 
 	Ok(texture_image_view)
