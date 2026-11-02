@@ -23,7 +23,7 @@ pub use shader::create_shader_module;
 pub use shader::ShaderStagesBuilder;
 
 pub use pipeline::Pipeline;
-pub use pipeline::ComputePipeline;
+pub use pipeline::GraphicsPipelineBuilder;
 
 pub use instance::create_instance;
 

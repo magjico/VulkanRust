@@ -5,6 +5,8 @@ fn main() {
     println!("cargo::rerun-if-changed=shaders/hello_model/shader.frag");
     println!("cargo::rerun-if-changed=shaders/ibl/brdf_lut.comp");
     println!("cargo::rerun-if-changed=shaders/ibl/equirect_to_cubemap.comp");
+    println!("cargo::rerun-if-changed=shaders/skybox/skybox.vert");
+    println!("cargo::rerun-if-changed=shaders/skybox/skybox.frag");
     println!("cargo:warning=Compiling shaders...");
 
     Command::new("glslc")
@@ -26,4 +28,15 @@ fn main() {
         .args(["shaders/ibl/equirect_to_cubemap.comp", "-o", "shaders/ibl/equirect_to_cubemap.spv"])
         .status()
         .expect("Failed to compile Equirect to Rectangle compute shader");
+
+    Command::new("glslc")
+        .args(["shaders/skybox/skybox.vert", "-o", "shaders/skybox/skybox_vert.spv"])
+        .status()
+        .expect("Failed to compile skybox vertex shader");
+
+    Command::new("glslc")
+        .args(["shaders/skybox/skybox.frag", "-o", "shaders/skybox/skybox_frag.spv"])
+        .status()
+        .expect("Failed to compile skybox fragment shader");
+
 }

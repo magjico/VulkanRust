@@ -12,7 +12,7 @@ use crate::resources::{
 	transition_image_layout,
 };
 use crate::gpu::{
-	ComputePipeline,
+	Pipeline,
 	create_storage_image_descriptor_set_layout,
 	create_image_to_image_descriptor_set_layout,
 };
@@ -120,7 +120,7 @@ impl BRDFLut {
 		)?;
 
 		// 2- pipeline
-		let pipeline = ComputePipeline::new(device, BRDF_LUT_COMP, &[set_layout])?;
+		let pipeline = Pipeline::new_compute(device, BRDF_LUT_COMP, &[set_layout])?;
 
 		// 3- record
 		// The portion of the image that the barrier covers.
@@ -348,18 +348,7 @@ impl EnvironmentCubemap {
 			1
 		)?;
 
-		// 3 - Array view
-		// let array_view = create_image_view(
-		// 	device,
-		// 	self.resource.vk_image,
-		// 	vk::Format::R16G16B16A16_SFLOAT,
-		// 	vk::ImageAspectFlags::COLOR,
-		// 	vk::ImageViewType::_2D_ARRAY,
-		// 	1,
-		// 	6
-		// )?;
-
-		// 4 - Descriptors
+		// 3 - Descriptors
 		let set_layout = create_image_to_image_descriptor_set_layout(device)?;
 		let pool = EnvironmentCubemap::create_descriptor_pool(device)?;
 		let set = create_image_to_image_descriptor_set(
@@ -371,10 +360,10 @@ impl EnvironmentCubemap {
 			self.resource.vk_image_view,
 		)?;
 
-		// 5 - Pipeline
-		let pipeline = ComputePipeline::new(device, EQUIRECT_TO_CUBEMAP_COMP, &[set_layout])?;
+		// 4 - Pipeline
+		let pipeline = Pipeline::new_compute(device, EQUIRECT_TO_CUBEMAP_COMP, &[set_layout])?;
 
-		// 6 - Record
+		// 5 - Record
 		let subresource_range = vk::ImageSubresourceRange::builder()
 			.aspect_mask(vk::ImageAspectFlags::COLOR)
 			.base_mip_level(0)
@@ -451,7 +440,6 @@ impl EnvironmentCubemap {
 		setup.defer(move |d| unsafe { pipeline.destroy(d) });
 		setup.defer(move |d| unsafe { d.destroy_descriptor_pool(pool, None) });
         setup.defer(move |d| unsafe { d.destroy_descriptor_set_layout(set_layout, None) });
-		// setup.defer(move |d| unsafe { d.destroy_image_view(array_view, None) });
 		setup.defer(move |d| unsafe {
             d.destroy_image_view(src_view, None);
             d.destroy_image(src_image, None);

@@ -1,5 +1,7 @@
 use std::mem::offset_of;
 
+use vulkanalia::prelude::v1_0::*;
+
 use crate::math::*;
 use crate::scene::{Material, Camera};
 use crate::constants::CORRECTION;
@@ -129,4 +131,22 @@ impl PushConstants {
 
     #[inline]
     pub fn get_frag_size() -> u32 { size_of::<PushConstants>() as u32 - Self::get_frag_offset() }
+
+    /// The two ranges this struct occupies: the node matrix in the vertex stage,
+    /// the material parameters in the fragment stage.
+    pub fn get_ranges() -> [vk::PushConstantRange; 2] {
+        let frag_offset = Self::get_frag_offset();
+        let frag_size = Self::get_frag_size();
+
+        [
+            *vk::PushConstantRange::builder()
+                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .offset(0)
+                .size(frag_offset),
+            *vk::PushConstantRange::builder()
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                .offset(frag_offset)
+                .size(frag_size)
+        ]
+    }
 }

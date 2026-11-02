@@ -6,6 +6,7 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::math::Vec3;
 use crate::gpu::{
+	GraphicsPipelineBuilder,
 	Pipeline,
     GPUContext,
 };
@@ -14,6 +15,7 @@ use crate::render::{
 	CommandRecorder,
 	DepthAttachment,
 	DescriptorLayouts,
+	PushConstants,
 	Descriptors,
 	Swapchain,
 	TextureData,
@@ -189,18 +191,23 @@ impl Persistent {
 		descriptor_layouts:		DescriptorLayouts,
 	) -> Result<Self> {
 		let swapchain_images_count = transient.swapchain.vk_images.len();
+		let push_constant_ranges = &PushConstants::get_ranges();
 
-		let graphic_pipeline = Pipeline::new(
-			device,
+
+		let graphic_pipeline = GraphicsPipelineBuilder::new(
 			&[
 				(VERT, vk::ShaderStageFlags::VERTEX),
 				(FRAG, vk::ShaderStageFlags::FRAGMENT),
 			],
+			descriptor_layouts.as_slice(),
 			transient.swapchain.vk_format,
-			transient.depth_attachment.vk_format,
-			gpu.max_msaa_samples,
-			descriptor_layouts.as_slice()
-		)?;
+			transient.depth_attachment.vk_format
+		)
+			.samples(gpu.max_msaa_samples)
+			.min_sample_shading(0.2)
+			.alpha_blending_enabled(true)
+			.push_constants(push_constant_ranges)
+			.build(device)?;
 
 		let uniform_buffers = UniformBuffers::new(
             instance,
