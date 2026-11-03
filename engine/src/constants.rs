@@ -69,6 +69,10 @@ pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
 pub const BRDF_LUT_COMP: &[u8] = include_bytes!("../shaders/ibl/brdf_lut.spv");
 /// Compute Equirect HDR to Cubemap shader
 pub const EQUIRECT_TO_CUBEMAP_COMP: &[u8] = include_bytes!("../shaders/ibl/equirect_to_cubemap.spv");
+/// skybox vert shader
+pub const SKYBOX_VERT: &[u8] = include_bytes!("../shaders/skybox/skybox_vert.spv"); 
+/// skybox frag shader
+pub const SKYBOX_FRAG: &[u8] = include_bytes!("../shaders/skybox/skybox_frag.spv");
 
 //==================================
 // Paths

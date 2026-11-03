@@ -119,6 +119,27 @@ pub fn create_image_to_image_descriptor_set_layout(device: &Device) -> Result<vk
     Ok(descriptor_set_layout)
 }
 
+pub fn create_skybox_descriptor_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout> {
+    let cubemap_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let sampler_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(1)
+        .descriptor_type(vk::DescriptorType::SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[cubemap_binding, sampler_binding];
+    let info = vk::DescriptorSetLayoutCreateInfo::builder()
+        .bindings(bindings);
+
+    let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&info, None)? };
+    Ok(descriptor_set_layout)
+}
+
 //===========================================
 // Shader pipeline and module
 //===========================================

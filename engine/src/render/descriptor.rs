@@ -11,6 +11,7 @@ use crate::gpu::{
 	create_global_descriptor_set_layout,
 	create_material_descriptor_set_layout,
 	create_storage_descriptor_set_layout,
+    create_skybox_descriptor_set_layout,
 };
 use crate::scene::{
 	ECSContext,
@@ -45,8 +46,9 @@ use crate::type_safety::{
 /// - **Set 1**. The five PBR textures of a material: base color, metallic-roughness, normal, occlusion and emissive + One PBR sampler. Rebound whenever the material changes.
 /// - **Set 2**. Joint matrix SSBO shared by every skinned instance. Bound once per frame.
 /// - **Set 3**. Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
+/// - **Set 4**. Layout of the skybox pass's own set: the environment cubemap and its sampler.
 #[derive(Debug)]
-pub struct DescriptorLayouts([vk::DescriptorSetLayout; 4]);
+pub struct DescriptorLayouts([vk::DescriptorSetLayout; 5]);
 
 impl DescriptorLayouts {
 	pub fn new(device: &Device) -> Result<Self> {
@@ -54,8 +56,10 @@ impl DescriptorLayouts {
         let material_set_layout = create_material_descriptor_set_layout(device)?;
         let skin_set_layout = create_storage_descriptor_set_layout(device)?;
         let instance_set_layout = create_storage_descriptor_set_layout(device)?;
+        
+        let skybox_set_layout = create_skybox_descriptor_set_layout(device)?;
 
-		Ok(Self([global_set_layout, material_set_layout, skin_set_layout, instance_set_layout]))
+		Ok(Self([global_set_layout, material_set_layout, skin_set_layout, instance_set_layout, skybox_set_layout]))
 	}
 
 	/// `global_set_layout` (**Set 0**). Camera and PBR uniforms (binding 0) plus the light SSBO (binding 1). Bound once per frame.
@@ -66,8 +70,10 @@ impl DescriptorLayouts {
     #[inline] pub fn skin(&self)		-> vk::DescriptorSetLayout { self.0[2] }
 	/// `instance_set_layout` (**Set 3**). Per-instance world matrices and skinning offsets, indexed by `gl_InstanceIndex`. Bound once per frame.
     #[inline] pub fn instance(&self)	-> vk::DescriptorSetLayout { self.0[3] }
-
-	#[inline] pub fn as_slice(&self) -> &[vk::DescriptorSetLayout] { &self.0 }
+    /// `skybox_set_layout` (**Set 4**). Layout of the skybox pass's own set: the environment cubemap and its sampler.
+    #[inline] pub fn skybox(&self)      -> vk::DescriptorSetLayout { self.0[4] }
+    /// The four sets of the PBR pipeline, in binding order.
+	#[inline] pub fn pbr_slice(&self) -> &[vk::DescriptorSetLayout] { &self.0[..4] }
 
     /// ## Safety
     ///
@@ -76,10 +82,9 @@ impl DescriptorLayouts {
 	#[rustfmt::skip]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_descriptor_set_layout(self.global(), None);
-        device.destroy_descriptor_set_layout(self.material(), None);
-        device.destroy_descriptor_set_layout(self.skin(), None);
-        device.destroy_descriptor_set_layout(self.instance(), None);
+        for layout in self.0 {
+            device.destroy_descriptor_set_layout(layout, None);
+        }
     }
 }
 // endregion
@@ -100,6 +105,7 @@ impl DescriptorLayouts {
 /// - `material_descriptor_sets` ( Vec<[vk::DescriptorSet]> ) - One set per material, across all loaded models concatenated in [ModelId] order. Indexed by [MaterialSetId].
 /// - `skinning_descriptor_set` ( [vk::DescriptorSet] ) - Single set pointing at the [SkinningBuffer]. Instances select their joint range through a per-instance offset.
 /// - `instance_descriptor_set` ( [vk::DescriptorSet] ) - Single set pointing at the [InstanceBuffer]. Instances are addressed through `firstInstance`.
+/// - `skybox_descriptor_set` ( [vk::DescriptorSet] ) - Single set of the skybox pass, holding the environment cubemap and its sampler.
 #[derive(Debug)]
 pub struct Descriptors {
     pub descriptor_pool:			vk::DescriptorPool,
@@ -107,6 +113,7 @@ pub struct Descriptors {
     pub material_descriptor_sets:	Vec<vk::DescriptorSet>,
     pub skinning_descriptor_set:	vk::DescriptorSet,
 	pub instance_descriptor_set:	vk::DescriptorSet,
+    pub skybox_descriptor_set:      vk::DescriptorSet,
 }
 
 impl Descriptors {
@@ -120,6 +127,7 @@ impl Descriptors {
         texture_sampler:            vk::Sampler,
 		models:						&ModelsStorage,
         light_buffer:				&LightBuffer,
+        env_cubemap_view:           vk::ImageView,
         images_count:				usize,
     ) -> Result<Self> {
 		let materials: Vec<&Material> = models.iter()
@@ -172,12 +180,21 @@ impl Descriptors {
 			instance_buffer.storage()
 		)?;
 
+        let skybox_descriptor_set = create_skybox_descriptor_set(
+            device,
+            descriptor_layouts.skybox(),
+            descriptor_pool,
+            env_cubemap_view,
+            texture_sampler
+        )?;
+
         Ok(Self {
 			descriptor_pool,
 			global_descriptor_sets,
 			material_descriptor_sets,
 			skinning_descriptor_set,
-			instance_descriptor_set
+			instance_descriptor_set,
+            skybox_descriptor_set,
 		})
 	}
 
@@ -231,17 +248,18 @@ fn create_descriptor_pool(
     swapchain_images_count: u32,
     materials_count: u32,
 ) -> Result<vk::DescriptorPool> {
+    // TODO: pass all the count var. into function arg.
     let ubo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(swapchain_images_count);
 
     let sampled_image_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::SAMPLED_IMAGE)
-        .descriptor_count(materials_count * 5);
+        .descriptor_count(materials_count * 5 + 1); // +1 for the cubemap skybox
 
     let sampler_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::SAMPLER)
-        .descriptor_count(materials_count);
+        .descriptor_count(materials_count + 1); // +1 for the cubemap skybox
 
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
@@ -254,7 +272,7 @@ fn create_descriptor_pool(
     let pool_sizes = &[ubo_size, sampled_image_size, sampler_size, ssbo_size];
     let info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(pool_sizes)
-        .max_sets(swapchain_images_count + materials_count + 1 + 1);
+        .max_sets(swapchain_images_count + materials_count + 1 + 1 + 1);
 
     let descriptor_pool = unsafe { device.create_descriptor_pool(&info, None)? };
 
@@ -529,4 +547,61 @@ pub fn create_image_to_image_descriptor_set(
     unsafe { device.update_descriptor_sets(writes, &[] as &[vk::CopyDescriptorSet]) };
     Ok(descriptor_set)
 }
+
+/// Allocates and writes the set the skybox pass samples its cubemap through.
+///
+/// ## Arguments
+///
+/// - `device` ( &[Device] ) - The Vulkan device.
+/// - `set_layout` ( [vk::DescriptorSetLayout] ) - Layout describing the two bindings.
+/// - `descriptor_pool` ( [vk::DescriptorPool] ) - Pool the set is allocated from.
+/// - `cubemap_view` ( [vk::ImageView] ) - Cube view of the environment map, in `SHADER_READ_ONLY_OPTIMAL`.
+/// - `sampler` ( [vk::Sampler] ) - Sampler the cubemap is read with.
+///
+/// ## Returns
+///
+/// - `Result<`[vk::DescriptorSet]`>`.
+fn create_skybox_descriptor_set(
+    device:             &Device,
+    descriptor_layout:	vk::DescriptorSetLayout,
+    descriptor_pool:    vk::DescriptorPool,
+    cubemap_view:       vk::ImageView,
+    sampler:        vk::Sampler,
+) -> Result<vk::DescriptorSet> {
+    let layouts = &[descriptor_layout];
+    let info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(layouts);
+
+    let descriptor_set = unsafe { device.allocate_descriptor_sets(&info)?[0] };
+
+    let cubemap_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(cubemap_view)
+    ];
+
+    let sampler_info = &[
+        *vk::DescriptorImageInfo::builder()
+            .sampler(sampler)
+    ];
+
+    let writes = &[
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(cubemap_info),
+        *vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .image_info(sampler_info)
+    ];
+
+    unsafe { device.update_descriptor_sets(writes, &[] as &[vk::CopyDescriptorSet]) };
+
+    Ok(descriptor_set)
+}
+
 // endregion

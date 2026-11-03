@@ -78,6 +78,7 @@ impl Pipeline {
 /// - `color_format` ( [vk::Format] ) - Format of the colour attachment, baked into the pipeline by dynamic rendering. Must match the swapchain.
 /// - `depth_format` ( [vk::Format] ) - Format of the depth attachment, likewise baked in.
 /// - `depth_compare_op` ( [vk::CompareOp] ) - Depth test operator. `LESS` for geometry, `LESS_OR_EQUAL` for a far-plane pass, whose fragments sit exactly at the cleared depth value.
+/// - `cull_mode` ( [vk::CullModeFlags] ) - Which faces the rasterizer discards. `BACK` for closed meshes, where back-facing triangles are hidden anyway; `NONE` for passes whose geometry has no meaningful winding.
 /// - `min_sample_shading` ( Option<`f32`> ) - Minimum fraction of samples the fragment shader runs for, smoothing aliasing inside triangles rather than only at their edges. `None` shades once per pixel, which is enough for a background pass with no high-frequency detail.
 /// - `read_vertex_input` ( `bool` ) - Whether the pipeline reads [Vertex] from a bound buffer. False for passes that generate their geometry from `gl_VertexIndex`.
 /// - `depth_write` ( `bool` ) - Whether fragments write to the depth buffer. False for a background pass, which must not occlude anything drawn after it.
@@ -90,6 +91,7 @@ pub struct GraphicsPipelineBuilder<'a> {
 	color_format:			vk::Format,
 	depth_format:			vk::Format,
 	depth_compare_op:		vk::CompareOp,
+	cull_mode:				vk::CullModeFlags,
 	min_sample_shading:		Option<f32>,
 	read_vertex_input:		bool,
 	depth_write:			bool,
@@ -111,6 +113,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 			push_constant_ranges: &[],
 			samples: vk::SampleCountFlags::_1,
 			depth_compare_op: vk::CompareOp::LESS,
+			cull_mode: vk::CullModeFlags::BACK,
 			min_sample_shading: None,
 			read_vertex_input: true,
 			depth_write: true,
@@ -155,6 +158,14 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 		self
 	}
 
+	/// Which faces the rasterizer discards. A fullscreen pass has no meaningful
+    /// winding, so it disables culling rather than matching the convention.
+    #[inline]
+    pub fn cull_mode(mut self, mode: vk::CullModeFlags) -> Self {
+        self.cull_mode = mode;
+        self
+    }
+
 	/// Alpha blending, as transparent materials need. Off by default, since an
     /// opaque pass writes straight to the attachment.
     #[inline]
@@ -198,7 +209,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 			.rasterizer_discard_enable(false)
 			.polygon_mode(vk::PolygonMode::FILL)
 			.line_width(1.0)
-			.cull_mode(vk::CullModeFlags::BACK)
+			.cull_mode(self.cull_mode)
 			.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
 			.depth_bias_enable(false);
 

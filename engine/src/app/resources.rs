@@ -42,6 +42,8 @@ use crate::scene::{
 use crate::constants::{
 	VERT,
 	FRAG,
+	SKYBOX_VERT,
+	SKYBOX_FRAG,
 	MAX_FRAMES_IN_FLIGHT,
 	ENV_CUBEMAP_SIZE,
 };
@@ -164,21 +166,22 @@ impl SwapchainDependant {
 /// - `sync` ( [FrameSync] ) - Semaphores and fences ordering frames in flight.
 #[derive(Debug)]
 pub struct Persistent {
-	pub gpu:					GPUContext,
-	pub descriptor_layouts:		DescriptorLayouts,
-	pub descriptors:			Descriptors,
-	pub graphic_pipeline:		Pipeline,
-	pub brdf_lut:				BRDFLut,
-	pub env_cubemap:			EnvironmentCubemap,
-	pub uniform_buffers:		UniformBuffers,
-	pub command_recorder:		CommandRecorder,
-	pub geometry_buffer:		GeometryBuffer,
-	pub textures:				TexturesStorage,
-	pub texture_sampler:		vk::Sampler,
-	pub default_texture:		TextureData,
-	pub camera:					Camera,
-	pub light_buffer:			LightBuffer,
-	pub sync:					FrameSync,
+	pub gpu:						GPUContext,
+	pub descriptor_layouts:			DescriptorLayouts,
+	pub descriptors:				Descriptors,
+	pub graphic_pipeline:			Pipeline,
+	pub skybox_pipeline:			Pipeline,
+	pub brdf_lut:					BRDFLut,
+	pub env_cubemap:				EnvironmentCubemap,
+	pub uniform_buffers:			UniformBuffers,
+	pub command_recorder:			CommandRecorder,
+	pub geometry_buffer:			GeometryBuffer,
+	pub textures:					TexturesStorage,
+	pub texture_sampler:			vk::Sampler,
+	pub default_texture:			TextureData,
+	pub camera:						Camera,
+	pub light_buffer:				LightBuffer,
+	pub sync:						FrameSync,
 }
 
 impl Persistent {
@@ -193,13 +196,12 @@ impl Persistent {
 		let swapchain_images_count = transient.swapchain.vk_images.len();
 		let push_constant_ranges = &PushConstants::get_ranges();
 
-
 		let graphic_pipeline = GraphicsPipelineBuilder::new(
 			&[
 				(VERT, vk::ShaderStageFlags::VERTEX),
 				(FRAG, vk::ShaderStageFlags::FRAGMENT),
 			],
-			descriptor_layouts.as_slice(),
+			descriptor_layouts.pbr_slice(),
 			transient.swapchain.vk_format,
 			transient.depth_attachment.vk_format
 		)
@@ -207,6 +209,21 @@ impl Persistent {
 			.min_sample_shading(0.2)
 			.alpha_blending_enabled(true)
 			.push_constants(push_constant_ranges)
+			.build(device)?;
+
+		let skybox_pipeline = Pipeline::graphics_builder(
+			&[
+				(SKYBOX_VERT, vk::ShaderStageFlags::VERTEX),
+				(SKYBOX_FRAG, vk::ShaderStageFlags::FRAGMENT),
+			],
+			&[descriptor_layouts.global(), descriptor_layouts.skybox()],
+			transient.swapchain.vk_format,
+			transient.depth_attachment.vk_format,
+		)
+			.samples(gpu.max_msaa_samples)
+			.cull_mode(vk::CullModeFlags::NONE)
+			.read_vertex_input(false)
+			.depth_read_only()
 			.build(device)?;
 
 		let uniform_buffers = UniformBuffers::new(
@@ -299,6 +316,7 @@ impl Persistent {
 			texture_sampler,
 			&models,
 			&light_buffer,
+			env_cubemap.view(),
 			swapchain_images_count
 		)?;
 
@@ -328,6 +346,7 @@ impl Persistent {
 			descriptor_layouts,
 			descriptors,
 			graphic_pipeline,
+			skybox_pipeline,
 			brdf_lut,
 			env_cubemap,
 			uniform_buffers,
@@ -350,6 +369,7 @@ impl Persistent {
     pub unsafe fn destroy(&self, device: &Device) {
 		self.uniform_buffers.destroy(device);
 		self.graphic_pipeline.destroy(device);
+		self.skybox_pipeline.destroy(device);
 		self.env_cubemap.destroy(device);
 		self.brdf_lut.destroy(device);
 		self.textures.destroy(device);

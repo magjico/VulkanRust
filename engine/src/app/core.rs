@@ -254,6 +254,7 @@ impl App {
             &self.device,
 			&mut self.ecs_context,
             &self.data.persistent.graphic_pipeline,
+			&self.data.persistent.skybox_pipeline,
             &self.data.persistent.geometry_buffer,
             &self.data.transient.swapchain,
             &self.data.transient.color_attachment,

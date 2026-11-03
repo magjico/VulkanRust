@@ -177,6 +177,7 @@ impl CommandRecorder {
         device:				&Device,
         ecs_context:		&mut ECSContext,
         graphic_pipeline:	&Pipeline,
+        skybox_pipeline:    &Pipeline,
         geometry_buffer:	&GeometryBuffer,
         swapchain:			&Swapchain,
         color_attachment:	&ColorAttachment,
@@ -251,6 +252,7 @@ impl CommandRecorder {
             device,
             ecs_context,
             graphic_pipeline,
+            skybox_pipeline,
             geometry_buffer,
             &[swapchain.vk_format],
             depth_attachment,
@@ -283,6 +285,7 @@ impl CommandRecorder {
         device:				&Device,
         ecs_context:		&mut ECSContext,
         graphic_pipeline:	&Pipeline,
+        skybox_pipeline:    &Pipeline,
         geometry_buffer:	&GeometryBuffer,
         swapchain_formats:	&[vk::Format],
         depth_attachment:	&DepthAttachment,
@@ -298,6 +301,7 @@ impl CommandRecorder {
 
         let models = ecs_context.world.get_resource::<ModelsStorage>()
             .ok_or_else(|| anyhow!("ModelsStorage not found"))?;
+
 		// Step 1 - Draw Sorting
 		// 1.a - gather entities, sorted by model
 		self.sorted_entities.extend(
@@ -499,6 +503,28 @@ impl CommandRecorder {
                 );
             }
         } 
+
+        unsafe {
+            device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                skybox_pipeline.vk_pipeline,
+            );
+
+            device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                skybox_pipeline.vk_layout,
+                0,
+                &[
+                    descriptors.global_descriptor_sets[image_index],
+                    descriptors.skybox_descriptor_set,
+                ],
+                &[]
+            );
+
+            device.cmd_draw(command_buffer, 3, 1, 0, 0);
+        }
 
         unsafe { device.end_command_buffer(command_buffer)?; }
         Ok(command_buffer)
