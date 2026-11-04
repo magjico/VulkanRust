@@ -13,7 +13,7 @@ layout(set=0, binding=1) uniform sampler equirectSampler;
 layout(set=0, binding=2, rgba16f) restrict writeonly uniform imageCube outputTexture;
 
 /*
-	* Direction pointed at by the texek this invocation owns.
+	* Direction pointed at by the texel this invocation owns.
 	*
 	* Calculate normalized sampling direction vector based on current fragment coordinates (gl_GlobalInvocationID.xyz).
 	* This is essentially "inverse-sampling": we reconstruct what the sampling vector would be if we wanted it to "hit"
@@ -31,8 +31,7 @@ vec3 getSamplingVector()
 		case 2u: dir = vec3(uv.x, 1.0, -uv.y); break;
 		case 3u: dir = vec3(uv.x, -1.0, uv.y); break;
 		case 4u: dir = vec3(uv.x, uv.y, 1.0); break;
-		case 5u: dir = vec3(-uv.x, uv.y, -1.0); break;
-		default: dir = vec3(-uv.x,  uv.y, -1.0); break;
+		default: dir = vec3(-uv.x, uv.y, -1.0); break;
 	}
 
 	return normalize(dir);
