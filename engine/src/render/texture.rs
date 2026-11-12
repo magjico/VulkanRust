@@ -183,7 +183,8 @@ pub fn create_texture_image(
 		format,
 		texture_extent.width,
 		texture_extent.height, 
-		mip_levels
+		mip_levels,
+        1
 	)?;
 
     setup.defer(move |d| {
@@ -284,6 +285,7 @@ pub fn generate_mipmaps(
     width: u32,
     height: u32,
     mip_levels: u32,
+    layer_count: u32,
 ) -> Result<()> {
     if !supports_linear_blitting(instance, physical_device, format) {
         return Err(anyhow!("Texture image format does not support linear blitting!"));
@@ -292,7 +294,7 @@ pub fn generate_mipmaps(
     let subresource = vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
         .base_array_layer(0)
-        .layer_count(1)
+        .layer_count(layer_count)
         .level_count(1);
 
     let mut barrier = vk::ImageMemoryBarrier::builder()
@@ -327,13 +329,13 @@ pub fn generate_mipmaps(
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .mip_level(i - 1)
             .base_array_layer(0)
-            .layer_count(1);
+            .layer_count(layer_count);
 
         let dst_subresource = vk::ImageSubresourceLayers::builder()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .mip_level(i)
             .base_array_layer(0)
-            .layer_count(1);
+            .layer_count(layer_count);
 
         let blit = vk::ImageBlit::builder()
             .src_offsets([

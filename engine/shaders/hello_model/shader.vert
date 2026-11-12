@@ -74,5 +74,4 @@ void main() {
     fragTangent = vec4(normalize(normalMat * inTangent.xyz), inTangent.w);
 
     gl_Position = ubo.proj * ubo.view * worldPos;
-    // gl_Position = vec4(inPosition * 0.5, 1.0);
 }

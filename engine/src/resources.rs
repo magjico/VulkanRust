@@ -8,6 +8,7 @@ pub use image::ImageBuilder;
 pub use image::transition_image_layout;
 pub use image::get_supported_format;
 pub use image::create_image_view;
+pub use image::full_mip_count;
 
 pub use buffer::create_buffer;
 pub use buffer::copy_buffers;

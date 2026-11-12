@@ -19,13 +19,27 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
         .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
 
     // Light binding
-    let light_binding: vk::DescriptorSetLayoutBindingBuilder<'_> = vk::DescriptorSetLayoutBinding::builder()
+    let light_binding = vk::DescriptorSetLayoutBinding::builder()
         .binding(1)
         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding, light_binding];
+    // Irradiance binding
+    let irr_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(2)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    // Environment Cubemap binding
+    let env_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(3)
+        .descriptor_type(vk::DescriptorType::SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[ubo_binding, light_binding, irr_binding, env_binding];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 

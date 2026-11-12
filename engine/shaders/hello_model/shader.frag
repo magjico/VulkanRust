@@ -23,6 +23,9 @@ layout(set = 0, binding = 1) readonly buffer Lights {
 	Light lights[];
 };
 
+layout(set = 0, binding = 2) uniform textureCube irradianceMap;
+layout(set = 0, binding = 3) uniform sampler envSampler;
+
 // Take a look at create_material_descriptor_set_layout in shader.rs
 layout(set = 1, binding = 0) uniform texture2D textures[5];
 layout(set = 1, binding = 1) uniform sampler texSampler;
@@ -178,6 +181,24 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 }
 
 /*
+	* Fresnel for image-based lighting.
+	*
+	* The plain Schlick approximation assumes one light direction. With an
+	* environment, a rough surface reflects from a whole lobe, so the response
+	* must fall off less sharply — otherwise indirect Fresnel comes out too strong
+	* on rough dielectrics. Clamping F0 against (1 - roughness) does that.
+	*
+	* @param cosTheta : dot(Normal, View)
+	* @param F0: base reflectivity
+	* @param roughness: material roughness [0, 1]
+	* @return the Fresnel reflectivity for each RGB channel.
+*/
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+/*
 	* ACES tonemapping — for PBR
 */
 vec3 ACESFilm(vec3 x) {
@@ -264,7 +285,11 @@ void main()
 		Lo += (kD * baseColor.rgb / PI + specular) * radiance * NdotL;
 	}
 
-	vec3 ambient = vec3(0.03) * baseColor.rgb * ao;
+	vec3 kS_ibl = fresnelSchlickRoughness(NdotV, F0, roughness);
+	vec3 kD_ibl = (vec3(1.0) - kS_ibl) * (1.0 - metallic);
+	vec3 irradiance = texture(samplerCube(irradianceMap, envSampler), N).rgb;
+	vec3 ambient = kD_ibl * irradiance * baseColor.rgb * ao * ubo.scaleIBLAmbient;
+
 	vec3 color = ambient + Lo + emissive;
 	color = ACESFilm(color * ubo.exposure);
 

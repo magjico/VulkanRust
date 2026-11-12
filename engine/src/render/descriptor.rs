@@ -154,6 +154,8 @@ impl Descriptors {
             descriptor_pool,
             uniform_buffers,
             light_buffer,
+            env_cubemap_view,
+            texture_sampler
         )?;
 
         let material_descriptor_sets = create_material_descriptor_sets(
@@ -255,11 +257,11 @@ fn create_descriptor_pool(
 
     let sampled_image_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::SAMPLED_IMAGE)
-        .descriptor_count(materials_count * 5 + 1); // +1 for the cubemap skybox
+        .descriptor_count(materials_count * 5 + 1 + swapchain_images_count); // +1 for the cubemap skybox
 
     let sampler_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::SAMPLER)
-        .descriptor_count(materials_count + 1); // +1 for the cubemap skybox
+        .descriptor_count(materials_count + 1 + swapchain_images_count); // +1 for the cubemap skybox
 
     let ssbo_size = vk::DescriptorPoolSize::builder()
         .type_(vk::DescriptorType::STORAGE_BUFFER)
@@ -304,6 +306,8 @@ fn create_global_descriptor_sets(
     descriptor_pool: vk::DescriptorPool,
     uniform_buffers: &[vk::Buffer],
     light_buffer: &LightBuffer,
+    irr_view: vk::ImageView,
+    sampler: vk::Sampler,
 ) -> Result<Vec<vk::DescriptorSet>> {
     let layouts = vec![global_set_layout; swapchain_images_count];
 
@@ -337,7 +341,26 @@ fn create_global_descriptor_sets(
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(light_info);
 
-        unsafe { device.update_descriptor_sets(&[ubo_write, light_write], &[] as &[vk::CopyDescriptorSet]) };
+        let irr_info = &[*vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(irr_view)
+        ];
+        let irr_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(2)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(irr_info);
+
+        let env_sampler_info = &[*vk::DescriptorImageInfo::builder()
+            .sampler(sampler)
+        ];
+        let env_sampler_write = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_sets[i])
+            .dst_binding(3)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .image_info(env_sampler_info);
+
+        unsafe { device.update_descriptor_sets(&[ubo_write, light_write, irr_write, env_sampler_write], &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)

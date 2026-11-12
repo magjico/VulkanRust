@@ -6,6 +6,7 @@ fn main() {
     println!("cargo::rerun-if-changed=shaders/ibl/brdf_lut.comp");
     println!("cargo::rerun-if-changed=shaders/ibl/equirect_to_cubemap.comp");
     println!("cargo::rerun-if-changed=shaders/ibl/irr_map.comp");
+    println!("cargo::rerun-if-changed=shaders/ibl/prefiltered.comp");
     println!("cargo::rerun-if-changed=shaders/skybox/skybox.vert");
     println!("cargo::rerun-if-changed=shaders/skybox/skybox.frag");
     println!("cargo:warning=Compiling shaders...");
@@ -34,6 +35,11 @@ fn main() {
         .args(["shaders/ibl/irr_map.comp", "-o", "shaders/ibl/irr_map.spv"])
         .status()
         .expect("Failed to compile Irradiance Cubemap compute shader");
+
+    Command::new("glslc")
+        .args(["shaders/ibl/prefiltered.comp", "-o", "shaders/ibl/prefiltered.spv"])
+        .status()
+        .expect("Failed to compile Prefiltered Cubemap compute shader");
 
     Command::new("glslc")
         .args(["shaders/skybox/skybox.vert", "-o", "shaders/skybox/skybox_vert.spv"])

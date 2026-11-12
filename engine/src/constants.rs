@@ -37,6 +37,8 @@ pub const MAX_INSTANCES_DATA: usize = MAX_INSTANCES as usize * MAX_FRAMES_IN_FLI
 pub const BRDF_LUT_SIZE: u32 = 512;
 /// Resolution of 1 cubemap face
 pub const ENV_CUBEMAP_SIZE: u32 = 1024;
+/// Face size of the diffuse irradiance cubemap (64x64), in texels.
+pub const IRRADIANCE_SIZE: u32 = 64;
 
 //==================================
 // Info Consts
@@ -69,6 +71,8 @@ pub const FRAG: &[u8] = include_bytes!("../shaders/hello_model/frag.spv");
 pub const BRDF_LUT_COMP: &[u8] = include_bytes!("../shaders/ibl/brdf_lut.spv");
 /// Compute Equirect HDR to Cubemap shader
 pub const EQUIRECT_TO_CUBEMAP_COMP: &[u8] = include_bytes!("../shaders/ibl/equirect_to_cubemap.spv");
+/// Compute irradiance shader
+pub const IRRADIANCE_COMP: &[u8] = include_bytes!("../shaders/ibl/irr_map.spv");
 /// skybox vert shader
 pub const SKYBOX_VERT: &[u8] = include_bytes!("../shaders/skybox/skybox_vert.spv"); 
 /// skybox frag shader

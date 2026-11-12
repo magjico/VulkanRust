@@ -11,24 +11,28 @@ use crate::gpu::{
     GPUContext,
 };
 use crate::render::{
+	BRDFLut,
 	ColorAttachment,
 	CommandRecorder,
+	Cubemap,
 	DepthAttachment,
 	DescriptorLayouts,
-	PushConstants,
 	Descriptors,
+	PushConstants,
 	Swapchain,
 	TextureData,
 	TexturesStorage,
-	BRDFLut,
-	EnvironmentCubemap,
 	create_texture_sampler,
+	generate_environment,
+	generate_irradiance,
+	generate_lut,
 };
 use crate::resources::{
-	UniformBuffers,
-	GeometryBuffer,
 	FrameSync,
+	GeometryBuffer,
 	SetupCommand,
+	UniformBuffers,
+	full_mip_count,
 };
 use crate::scene::{
 	Time,
@@ -46,6 +50,7 @@ use crate::constants::{
 	SKYBOX_FRAG,
 	MAX_FRAMES_IN_FLIGHT,
 	ENV_CUBEMAP_SIZE,
+	IRRADIANCE_SIZE,
 };
 use crate::setup::{
 	load_gltf_models,
@@ -156,6 +161,10 @@ impl SwapchainDependant {
 /// - `descriptor_layouts` ( [DescriptorLayouts] ) - Layouts of the four descriptor sets, also needed to build the pipeline layout.
 /// - `descriptors` ( [Descriptors] ) - Descriptor pool and every set allocated from it.
 /// - `graphic_pipeline` ( [Pipeline] ) - Graphics pipeline and its layout, baked against the swapchain format, the depth format and the sample count.
+/// - `skybox_pipeline` ( [Pipeline] ) - Draws the environment as a background: a fullscreen triangle at the far plane, depth-tested but not depth-writing, so it only fills what the geometry left empty.
+/// - `brdf_lut` ( [BRDFLut] ) - Pre-integrated split-sum BRDF. Scene-independent, so it is generated once and never rebuilt.
+/// - `env_cubemap` ( [Cubemap] ) - The HDR panorama projected onto six faces. Sampled directly by the skybox, and convolved into the maps the IBL terms read.
+/// - `irr_cubemap` ( [Cubemap] ) - Diffuse irradiance convolved from `env_cubemap`, read by the PBR shader for the indirect diffuse term.
 /// - `uniform_buffers` ( [UniformBuffers] ) - One uniform buffer per swapchain image, so the count follows the image count.
 /// - `command_recorder` ( [CommandRecorder] ) - Command pools, command buffers, and the per-frame scratch buffers used while recording.
 /// - `geometry` ( [GeometryBuffer] ) - Vertices and indices of every loaded model, with the offsets locating each mesh.
@@ -172,7 +181,8 @@ pub struct Persistent {
 	pub graphic_pipeline:			Pipeline,
 	pub skybox_pipeline:			Pipeline,
 	pub brdf_lut:					BRDFLut,
-	pub env_cubemap:				EnvironmentCubemap,
+	pub env_cubemap:				Cubemap,
+	pub irr_cubemap:				Cubemap,
 	pub uniform_buffers:			UniformBuffers,
 	pub command_recorder:			CommandRecorder,
 	pub geometry_buffer:			GeometryBuffer,
@@ -280,21 +290,39 @@ impl Persistent {
 			device,
 			gpu.physical_device
 		)?;
-		brdf_lut.generate(device, &mut setup)?;
+		generate_lut(device, &mut setup, &brdf_lut)?;
 
 		let sky_env = load_alps_environment()?;
-		let env_cubemap = EnvironmentCubemap::new(
+
+		let env_cubemap = Cubemap::new(
 			instance,
 			device,
 			gpu.physical_device,
 			ENV_CUBEMAP_SIZE,
+			full_mip_count(ENV_CUBEMAP_SIZE, ENV_CUBEMAP_SIZE),
 		)?;
-		env_cubemap.generate(
+		generate_environment(
 			instance,
 			device,
 			gpu.physical_device,
+			&env_cubemap,
 			&mut setup,
 			&sky_env,
+			texture_sampler
+		)?;
+
+		let irr_cubemap = Cubemap::new(
+			instance,
+			device,
+			gpu.physical_device,
+			IRRADIANCE_SIZE,
+			1,
+		)?;
+		generate_irradiance(
+			device,
+			&env_cubemap,
+			&irr_cubemap,
+			&mut setup,
 			texture_sampler
 		)?;
 
@@ -316,7 +344,7 @@ impl Persistent {
 			texture_sampler,
 			&models,
 			&light_buffer,
-			env_cubemap.view(),
+			env_cubemap.resource.vk_image_view,
 			swapchain_images_count
 		)?;
 
@@ -349,6 +377,7 @@ impl Persistent {
 			skybox_pipeline,
 			brdf_lut,
 			env_cubemap,
+			irr_cubemap,
 			uniform_buffers,
 			command_recorder,
 			geometry_buffer,
@@ -371,6 +400,7 @@ impl Persistent {
 		self.graphic_pipeline.destroy(device);
 		self.skybox_pipeline.destroy(device);
 		self.env_cubemap.destroy(device);
+		self.irr_cubemap.destroy(device);
 		self.brdf_lut.destroy(device);
 		self.textures.destroy(device);
 		device.destroy_sampler(self.texture_sampler, None);

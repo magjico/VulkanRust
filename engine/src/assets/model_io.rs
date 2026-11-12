@@ -20,7 +20,7 @@ use gltf::animation::{Interpolation, Property};
 
 use vulkanalia::prelude::v1_0::*;
 
-use crate::resources::SetupCommand;
+use crate::resources::{SetupCommand, full_mip_count};
 use crate::ops::{FlatGraph, Node};
 use crate::type_safety::{NodeId, MaterialId, TextureId, SamplerId};
 use crate::math::*;
@@ -63,7 +63,7 @@ pub fn load_texture(
 	let mut pixels = vec![0; size as usize];
 	reader.next_frame(&mut pixels)?;
 
-    let mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
+    let mip_levels =  full_mip_count(width, height);
 
     let (texture_image, texture_image_memory) = create_texture_image(
         instance,
@@ -272,7 +272,7 @@ fn load_rgba_texture(
     let img = image::load_from_memory(raw_data)?.to_rgba8();
     let (w, h) = img.dimensions();
     let extent = vk::Extent3D { width: w, height: h, depth: 1 };
-    let mip_levels = (w.max(h) as f32).log2().floor() as u32 + 1;
+    let mip_levels = full_mip_count(w, h);
 
     Ok((
         img.into_raw(),

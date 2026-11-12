@@ -326,3 +326,14 @@ pub fn get_supported_format(
         })
         .ok_or_else(|| anyhow!("Failed to find a supported format!"))
 }
+
+/// Calculates the number of levels in the mip chain.
+///
+/// Each level halves the previous one, so the count is how many times the largest
+/// dimension can be halved, plus one for level 0 the original image.
+///
+/// See https://kylemayes.github.io/vulkanalia/quality/generating_mipmaps.html
+#[inline]
+pub fn full_mip_count(image_width: u32, image_height: u32) -> u32 {
+	image_width.max(image_height).ilog2() + 1
+}

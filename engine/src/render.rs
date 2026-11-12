@@ -33,4 +33,7 @@ pub use descriptor::create_storage_image_descriptor_set;
 pub use descriptor::create_image_to_image_descriptor_set;
 
 pub use ibl::BRDFLut;
-pub use ibl::EnvironmentCubemap;
+pub use ibl::Cubemap;
+pub use ibl::generate_lut;
+pub use ibl::generate_environment;
+pub use ibl::generate_irradiance;
