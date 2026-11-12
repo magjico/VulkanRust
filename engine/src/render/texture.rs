@@ -216,6 +216,7 @@ pub fn create_texture_image_view(
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
         vk::ImageViewType::_2D,
+        0,
         mip_levels,
         1,
     )?;

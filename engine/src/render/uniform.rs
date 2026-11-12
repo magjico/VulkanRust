@@ -52,7 +52,8 @@ impl UniformBufferObject {
     // TODO: pass all raw argument into a struct RenderParams
     pub fn from_camera(
         camera: &Camera,
-        aspect_ratio: f32
+        aspect_ratio: f32,
+        mip_levels: u32,
     ) -> Self {
         let view = camera.get_view_matrix();
 
@@ -73,7 +74,7 @@ impl UniformBufferObject {
             cam_pos,
             exposure: 4.5,
             gamma: 2.2,
-            prefiltered_cube_mip_levels: 1.0,
+            prefiltered_cube_mip_levels: (mip_levels - 1) as f32,
             scale_ibl_ambient: 1.0
         }
     }

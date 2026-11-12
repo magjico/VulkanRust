@@ -39,6 +39,8 @@ pub const BRDF_LUT_SIZE: u32 = 512;
 pub const ENV_CUBEMAP_SIZE: u32 = 1024;
 /// Face size of the diffuse irradiance cubemap (64x64), in texels.
 pub const IRRADIANCE_SIZE: u32 = 64;
+/// Face size of the prefiltered specular cubemap, in texels.
+pub const PREFILTERED_SIZE: u32 = 512;
 
 //==================================
 // Info Consts
@@ -73,6 +75,8 @@ pub const BRDF_LUT_COMP: &[u8] = include_bytes!("../shaders/ibl/brdf_lut.spv");
 pub const EQUIRECT_TO_CUBEMAP_COMP: &[u8] = include_bytes!("../shaders/ibl/equirect_to_cubemap.spv");
 /// Compute irradiance shader
 pub const IRRADIANCE_COMP: &[u8] = include_bytes!("../shaders/ibl/irr_map.spv");
+/// Compute prefiltered shader
+pub const PREFILTERED_COMP: &[u8] = include_bytes!("../shaders/ibl/prefiltered.spv");
 /// skybox vert shader
 pub const SKYBOX_VERT: &[u8] = include_bytes!("../shaders/skybox/skybox_vert.spv"); 
 /// skybox frag shader

@@ -25,6 +25,8 @@ layout(set = 0, binding = 1) readonly buffer Lights {
 
 layout(set = 0, binding = 2) uniform textureCube irradianceMap;
 layout(set = 0, binding = 3) uniform sampler envSampler;
+layout(set = 0, binding = 4) uniform textureCube prefilteredMap;
+layout(set = 0, binding = 5) uniform texture2D brdfLut;
 
 // Take a look at create_material_descriptor_set_layout in shader.rs
 layout(set = 1, binding = 0) uniform texture2D textures[5];
@@ -288,7 +290,15 @@ void main()
 	vec3 kS_ibl = fresnelSchlickRoughness(NdotV, F0, roughness);
 	vec3 kD_ibl = (vec3(1.0) - kS_ibl) * (1.0 - metallic);
 	vec3 irradiance = texture(samplerCube(irradianceMap, envSampler), N).rgb;
-	vec3 ambient = kD_ibl * irradiance * baseColor.rgb * ao * ubo.scaleIBLAmbient;
+
+	vec3 R = reflect(-V, N);
+	float lod = roughness * ubo.prefilteredCubMipLevels;
+
+	vec3 prefilteredColor = textureLod(samplerCube(prefilteredMap, envSampler), R, lod).rgb;
+	vec2 envBRDF = texture(sampler2D(brdfLut, envSampler), vec2(NdotV, roughness)).rg;
+	vec3 specular = prefilteredColor * (kS_ibl * envBRDF.x + envBRDF.y);
+
+	vec3 ambient = (kD_ibl * irradiance * baseColor.rgb + specular) * ao * ubo.scaleIBLAmbient;
 
 	vec3 color = ambient + Lo + emissive;
 	color = ACESFilm(color * ubo.exposure);

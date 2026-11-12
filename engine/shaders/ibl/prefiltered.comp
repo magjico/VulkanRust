@@ -18,7 +18,7 @@ layout(local_size_x=16, local_size_y=16) in;
 
 layout(set=0, binding=0) uniform textureCube envTexture;
 layout(set=0, binding=1) uniform sampler envSampler;
-layout(set=0, binding=2) restrict writeonly uniform imageCube prefiltered;
+layout(set=0, binding=2, rgba16f) restrict writeonly uniform imageCube prefiltered;
 
 layout(push_constant) uniform PushConstants {
 	float roughness;
@@ -35,7 +35,7 @@ float radicalInverse_VdC(uint bits)
 	bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
 	bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
 	bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-	return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+	return float(bits) * 2.3283064365386963e-10;
 }
 
 // Sample i-th point from Hammersley point set of NumSamples points total.

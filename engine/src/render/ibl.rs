@@ -25,6 +25,7 @@ use crate::constants::{
 	BRDF_LUT_COMP,
 	EQUIRECT_TO_CUBEMAP_COMP,
 	IRRADIANCE_COMP,
+	PREFILTERED_COMP,
 	BRDF_LUT_SIZE,
 };
 
@@ -39,7 +40,7 @@ const CUBEMAP_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 /// Red holds the scale applied to F0, green the bias. Generated once at startup
 /// by a compute shader and independent of the scene and of the environment.
 #[derive(Debug)]
-pub struct BRDFLut(ImageResource);
+pub struct BRDFLut(pub ImageResource);
 
 /// A cube-shaped image: six square faces sharing one allocation, viewed as a cube.
 ///
@@ -76,6 +77,7 @@ impl BRDFLut {
 			format,
 			vk::ImageAspectFlags::COLOR,
 			vk::ImageViewType::_2D,
+			0,
 			1,
 			1,
 		)?;
@@ -124,6 +126,7 @@ impl Cubemap {
 			CUBEMAP_FORMAT,
 			vk::ImageAspectFlags::COLOR,
 			vk::ImageViewType::CUBE,
+			0,
 			mip_levels, 
 			6
 		)?;
@@ -175,7 +178,12 @@ pub fn generate_lut(
 	)?;
 
 	// 2- pipeline
-	let pipeline = Pipeline::new_compute(device, BRDF_LUT_COMP, &[set_layout])?;
+	let pipeline = Pipeline::new_compute(
+		device,
+		BRDF_LUT_COMP,
+		&[set_layout],
+		&[] as &[vk::PushConstantRange],
+	)?;
 
 	// 3- record
 	// The portion of the image that the barrier covers.
@@ -349,7 +357,6 @@ pub fn generate_environment(
 	Ok(())
 }
 
-
 pub fn generate_irradiance(
 	device: &Device,
 	src: &Cubemap,
@@ -394,6 +401,146 @@ pub fn generate_irradiance(
 		);
 	}
 
+
+	Ok(())
+}
+
+/// Convolves the environment cubemap into a chain of increasingly rough specular
+/// reflections, one mip level per roughness step.
+///
+/// Mip 0 holds the mirror reflection, the last level the roughest. The fragment
+/// shader picks a level from the material roughness, so the chain length must
+/// reach it through `prefilteredCubMipLevels` in the UBO.
+///
+/// `src` must carry its own mip chain: each sample reads it at a level derived
+/// from its probability density, which is what keeps a bright texel from
+/// becoming an isolated firefly at high roughness.
+pub fn generate_prefiltered(
+	device: &Device,
+	setup: &mut SetupCommand,
+	src: &Cubemap,
+	dst: &Cubemap,
+	sampler: vk::Sampler,
+) -> Result<()> {
+	let push_constant_range = *vk::PushConstantRange::builder()
+		.stage_flags(vk::ShaderStageFlags::COMPUTE)
+		.offset(0)
+		.size(size_of::<f32>() as u32);
+
+	let set_layout = create_image_to_image_descriptor_set_layout(device)?;
+	let pool = create_image_to_image_descriptor_pool(device, dst.mip_levels)?;
+	let pipeline = Pipeline::new_compute(
+		device,
+		PREFILTERED_COMP,
+		&[set_layout],
+		&[push_constant_range],
+	)?;
+
+	// Undefined -> General
+	let to_general = vk::ImageMemoryBarrier::builder()
+		.old_layout(vk::ImageLayout::UNDEFINED)
+		.new_layout(vk::ImageLayout::GENERAL)
+		.src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+		.dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+		.src_access_mask(vk::AccessFlags::empty())
+		.dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+		.image(dst.resource.vk_image)
+		.subresource_range(get_subresource_range(0, dst.mip_levels, 6));
+
+	unsafe {
+		device.cmd_pipeline_barrier(
+			setup.command_buffer,
+			vk::PipelineStageFlags::TOP_OF_PIPE,
+			vk::PipelineStageFlags::COMPUTE_SHADER,
+			vk::DependencyFlags::empty(),
+			&[] as &[vk::MemoryBarrier],
+			&[] as &[vk::BufferMemoryBarrier],
+			&[to_general]
+		);
+
+		device.cmd_bind_pipeline(
+			setup.command_buffer,
+			vk::PipelineBindPoint::COMPUTE,
+			pipeline.vk_pipeline,
+		);
+	}
+
+	for mip in 0..dst.mip_levels {
+		let mip_view = create_image_view(
+			device,
+			dst.resource.vk_image,
+			CUBEMAP_FORMAT,
+			vk::ImageAspectFlags::COLOR,
+			vk::ImageViewType::CUBE,
+			mip,
+			1,
+			6
+		)?;
+
+		let set = create_image_to_image_descriptor_set(
+			device,
+			set_layout,
+			pool,
+			src.resource.vk_image_view,
+			sampler,
+			mip_view
+		)?;
+
+		let roughness = mip as f32 / (dst.mip_levels - 1) as f32;
+		let mip_size = dst.face_size >> mip;
+
+		let groups = mip_size.div_ceil(IBL_LOCAL_SIZE);
+
+		unsafe {
+			device.cmd_bind_descriptor_sets(
+				setup.command_buffer,
+				vk::PipelineBindPoint::COMPUTE,
+				pipeline.vk_layout,
+				0,
+				&[set],
+				&[],
+			);
+
+			device.cmd_push_constants(
+				setup.command_buffer,
+				pipeline.vk_layout,
+				vk::ShaderStageFlags::COMPUTE,
+				0,
+				&roughness.to_ne_bytes(),
+			);
+
+			device.cmd_dispatch(setup.command_buffer, groups, groups, 6);
+		}
+
+		setup.defer(move |d| unsafe { d.destroy_image_view(mip_view, None) });
+	}
+
+	// General -> Shader read only + block the read until the write is finish
+	let to_read_only = vk::ImageMemoryBarrier::builder()
+		.old_layout(vk::ImageLayout::GENERAL)
+		.new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+		.src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+		.dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+		.src_access_mask(vk::AccessFlags::SHADER_WRITE)
+		.dst_access_mask(vk::AccessFlags::SHADER_READ)
+		.image(dst.resource.vk_image)
+		.subresource_range(get_subresource_range(0, dst.mip_levels, 6));
+
+	unsafe {
+		device.cmd_pipeline_barrier(
+			setup.command_buffer,
+			vk::PipelineStageFlags::COMPUTE_SHADER,
+			vk::PipelineStageFlags::FRAGMENT_SHADER,
+			vk::DependencyFlags::empty(),
+			&[] as &[vk::MemoryBarrier],
+			&[] as &[vk::BufferMemoryBarrier],
+			&[to_read_only],
+		);
+	}
+
+	setup.defer(move |d| unsafe { pipeline.destroy(d) });
+	setup.defer(move |d| unsafe { d.destroy_descriptor_pool(pool, None) });
+	setup.defer(move |d| unsafe { d.destroy_descriptor_set_layout(set_layout, None) });
 
 	Ok(())
 }
@@ -456,6 +603,7 @@ fn upload_equirect(
 		SRC_FORMAT,
 		vk::ImageAspectFlags::COLOR,
 		vk::ImageViewType::_2D,
+		0,
 		1,
 		1,
 	)?;
@@ -519,13 +667,14 @@ fn record_cubemap_pass(
 		CUBEMAP_FORMAT,
 		vk::ImageAspectFlags::COLOR,
 		vk::ImageViewType::CUBE,
+		0,
 		1,
 		6,
 	)?;
 
 	// 1 - Descriptor
 	let set_layout = create_image_to_image_descriptor_set_layout(device)?;
-    let pool = create_image_to_image_descriptor_pool(device)?;
+    let pool = create_image_to_image_descriptor_pool(device, 1)?;
 
 	let set = create_image_to_image_descriptor_set(
 		device,
@@ -537,7 +686,12 @@ fn record_cubemap_pass(
 	)?;
 
 	// 2 - Pipeline
-	let pipeline = Pipeline::new_compute(device, shader, &[set_layout])?;
+	let pipeline = Pipeline::new_compute(
+		device,
+		shader,
+		&[set_layout],
+		&[] as &[vk::PushConstantRange]
+	)?;
 
 	// 3 - Record
 	let subresource_range = get_subresource_range(
@@ -609,7 +763,7 @@ fn record_cubemap_pass(
 /// ## Returns
 /// 
 /// - `Result<vk::DescriptorPool>` - The descriptor pool.
-fn create_image_to_image_descriptor_pool(device: &Device) -> Result<vk::DescriptorPool> {
+fn create_image_to_image_descriptor_pool(device: &Device, max_sets: u32) -> Result<vk::DescriptorPool> {
 	let pool_sizes = &[
 		*vk::DescriptorPoolSize::builder()
 			.type_(vk::DescriptorType::SAMPLED_IMAGE)
@@ -624,7 +778,7 @@ fn create_image_to_image_descriptor_pool(device: &Device) -> Result<vk::Descript
 
 	let pool_info = vk::DescriptorPoolCreateInfo::builder()
 		.pool_sizes(pool_sizes)
-		.max_sets(1);
+		.max_sets(max_sets);
 
 	Ok(unsafe { device.create_descriptor_pool(&pool_info, None)? })
 }

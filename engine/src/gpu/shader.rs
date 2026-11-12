@@ -39,7 +39,28 @@ pub fn create_global_descriptor_set_layout(device: &Device) -> Result<vk::Descri
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT);
 
-    let bindings = &[ubo_binding, light_binding, irr_binding, env_binding];
+    // Prefiltered Cubemap binding
+    let pre_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(4)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    // BRDF-LUT binding
+    let brdf_lut_binding = vk::DescriptorSetLayoutBinding::builder()
+        .binding(5)
+        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+    let bindings = &[
+        ubo_binding,
+        light_binding,
+        irr_binding,
+        env_binding,
+        pre_binding,
+        brdf_lut_binding,
+    ];
     let info = vk::DescriptorSetLayoutCreateInfo::builder()
         .bindings(bindings);
 

@@ -249,12 +249,13 @@ pub fn create_image_view(
     format: vk::Format,
     aspect: vk::ImageAspectFlags,
 	view_type: vk::ImageViewType,
+	base_mip_level: u32,
     mip_levels: u32,
 	layer_count: u32,
 ) -> Result<vk::ImageView> {
     let subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(aspect)
-        .base_mip_level(0)
+        .base_mip_level(base_mip_level)
         .level_count(mip_levels)
         .base_array_layer(0)
         .layer_count(layer_count);

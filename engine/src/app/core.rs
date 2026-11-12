@@ -245,6 +245,7 @@ impl App {
         let ubo = UniformBufferObject::from_camera(
 			&self.data.persistent.camera,
 			self.data.transient.swapchain.vk_extent.width as f32 / self.data.transient.swapchain.vk_extent.height as f32,
+			self.data.persistent.pre_cubemap.mip_levels
 		);
 
 		unsafe { self.data.persistent.uniform_buffers.write(&self.device, image_index, &ubo)? };

@@ -11,21 +11,7 @@ use crate::gpu::{
     GPUContext,
 };
 use crate::render::{
-	BRDFLut,
-	ColorAttachment,
-	CommandRecorder,
-	Cubemap,
-	DepthAttachment,
-	DescriptorLayouts,
-	Descriptors,
-	PushConstants,
-	Swapchain,
-	TextureData,
-	TexturesStorage,
-	create_texture_sampler,
-	generate_environment,
-	generate_irradiance,
-	generate_lut,
+	BRDFLut, ColorAttachment, CommandRecorder, Cubemap, DepthAttachment, DescriptorLayouts, Descriptors, PushConstants, Swapchain, TextureData, TexturesStorage, create_texture_sampler, generate_environment, generate_irradiance, generate_lut, generate_prefiltered,
 };
 use crate::resources::{
 	FrameSync,
@@ -51,6 +37,7 @@ use crate::constants::{
 	MAX_FRAMES_IN_FLIGHT,
 	ENV_CUBEMAP_SIZE,
 	IRRADIANCE_SIZE,
+	PREFILTERED_SIZE,
 };
 use crate::setup::{
 	load_gltf_models,
@@ -183,6 +170,7 @@ pub struct Persistent {
 	pub brdf_lut:					BRDFLut,
 	pub env_cubemap:				Cubemap,
 	pub irr_cubemap:				Cubemap,
+	pub pre_cubemap:				Cubemap,
 	pub uniform_buffers:			UniformBuffers,
 	pub command_recorder:			CommandRecorder,
 	pub geometry_buffer:			GeometryBuffer,
@@ -326,6 +314,21 @@ impl Persistent {
 			texture_sampler
 		)?;
 
+		let pre_cubemap = Cubemap::new(
+			instance,
+			device,
+			gpu.physical_device,
+			PREFILTERED_SIZE,
+			full_mip_count(PREFILTERED_SIZE, PREFILTERED_SIZE)
+		)?;
+		generate_prefiltered(
+			device,
+			&mut setup,
+			&env_cubemap,
+			&pre_cubemap,
+			texture_sampler
+		)?;
+
 		setup.flush(device, gpu.graphics_queue)?;
 
 		let light_buffer = create_default_lighting(
@@ -345,6 +348,9 @@ impl Persistent {
 			&models,
 			&light_buffer,
 			env_cubemap.resource.vk_image_view,
+			irr_cubemap.resource.vk_image_view,
+			pre_cubemap.resource.vk_image_view,
+			brdf_lut.0.vk_image_view,
 			swapchain_images_count
 		)?;
 
@@ -378,6 +384,7 @@ impl Persistent {
 			brdf_lut,
 			env_cubemap,
 			irr_cubemap,
+			pre_cubemap,
 			uniform_buffers,
 			command_recorder,
 			geometry_buffer,
@@ -401,6 +408,7 @@ impl Persistent {
 		self.skybox_pipeline.destroy(device);
 		self.env_cubemap.destroy(device);
 		self.irr_cubemap.destroy(device);
+		self.pre_cubemap.destroy(device);
 		self.brdf_lut.destroy(device);
 		self.textures.destroy(device);
 		device.destroy_sampler(self.texture_sampler, None);

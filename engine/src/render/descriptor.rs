@@ -128,6 +128,9 @@ impl Descriptors {
 		models:						&ModelsStorage,
         light_buffer:				&LightBuffer,
         env_cubemap_view:           vk::ImageView,
+        irr_view:                   vk::ImageView,
+        pre_view:                   vk::ImageView,
+        brdf_lut_view:              vk::ImageView,
         images_count:				usize,
     ) -> Result<Self> {
 		let materials: Vec<&Material> = models.iter()
@@ -154,7 +157,9 @@ impl Descriptors {
             descriptor_pool,
             uniform_buffers,
             light_buffer,
-            env_cubemap_view,
+            irr_view,
+            pre_view,
+            brdf_lut_view,
             texture_sampler
         )?;
 
@@ -281,20 +286,25 @@ fn create_descriptor_pool(
     Ok(descriptor_pool)
 }
 
-/// Allocates and writes one set 0 descriptor per swapchain image.
+/// Allocates and writes the per-frame global sets: camera uniforms, the scene's
+/// lights, and the three IBL maps with their sampler.
 ///
-/// Each set points at that image's uniform buffer (binding 0) and at the shared
-/// light buffer (binding 1). One set per image is required because the uniform
-/// buffers are themselves duplicated per image.
+/// One set per swapchain image, since the uniform buffer rotates with the frames
+/// in flight. Everything else is the same handle in every set and the environment
+/// does not change at runtime.
 ///
 /// ## Arguments
 ///
 /// - `device` ( &[Device] ) - The Vulkan device.
-/// - `swapchain_images_count` ( `usize` ) - Number of swapchain images, and therefore of sets to allocate.
-/// - `global_set_layout` ( [vk::DescriptorSetLayout] ) - See [create_global_descriptor_set_layout].
-/// - `descriptor_pool` ( [vk::DescriptorPool] ) - See [create_descriptor_pool].
-/// - `uniform_buffers` ( &\[[vk::Buffer]] ) - One uniform buffer per swapchain image, in matching order.
-/// - `light_buffer` ( &[LightBuffer] ) - Shared light SSBO, referenced by every set.
+/// - `swapchain_images_count` ( `usize` ) - How many sets to allocate, one per image.
+/// - `global_set_layout` ( [vk::DescriptorSetLayout] ) - Layout describing the six bindings.
+/// - `descriptor_pool` ( [vk::DescriptorPool] ) - Pool the sets are allocated from.
+/// - `uniform_buffers` ( &\[[vk::Buffer]] ) - One uniform buffer per swapchain image, in the same order.
+/// - `light_buffer` ( &[LightBuffer] ) - Storage buffer holding the scene's lights.
+/// - `irradiance_view` ( [vk::ImageView] ) - Cube view of the diffuse irradiance map.
+/// - `prefiltered_view` ( [vk::ImageView] ) - Cube view of the prefiltered specular map, all mip levels.
+/// - `brdf_lut_view` ( [vk::ImageView] ) - 2D view of the pre-integrated BRDF.
+/// - `env_sampler` ( [vk::Sampler] ) - Sampler the three IBL maps are read with.
 ///
 /// ## Returns
 ///
@@ -307,6 +317,8 @@ fn create_global_descriptor_sets(
     uniform_buffers: &[vk::Buffer],
     light_buffer: &LightBuffer,
     irr_view: vk::ImageView,
+    pre_view: vk::ImageView,
+    brdf_lut_view: vk::ImageView,
     sampler: vk::Sampler,
 ) -> Result<Vec<vk::DescriptorSet>> {
     let layouts = vec![global_set_layout; swapchain_images_count];
@@ -318,49 +330,72 @@ fn create_global_descriptor_sets(
     // to return
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&info)? };
 
+    let irr_info = &[*vk::DescriptorImageInfo::builder()
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .image_view(irr_view)
+    ];
+
+    let pre_info = &[*vk::DescriptorImageInfo::builder()
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .image_view(pre_view)
+    ];
+
+    let brdf_lut_info = &[*vk::DescriptorImageInfo::builder()
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .image_view(brdf_lut_view)
+    ];
+
+    let env_sampler_info = &[*vk::DescriptorImageInfo::builder()
+        .sampler(sampler)
+    ];
+
     for i in 0..swapchain_images_count {
         let ubo_info = &[*vk::DescriptorBufferInfo::builder()
             .buffer(uniform_buffers[i])
             .offset(0)
             .range(size_of::<UniformBufferObject>() as u64)];
-        let ubo_write = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_sets[i])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(ubo_info);
 
         let light_info = &[*vk::DescriptorBufferInfo::builder()
             .buffer(light_buffer.buffer)
             .offset(0)
             .range((light_buffer.max_lights * size_of::<Light>()) as u64)];
-        let light_write = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_sets[i])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(light_info);
 
-        let irr_info = &[*vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(irr_view)
+        let descriptor_writes = &[
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .buffer_info(ubo_info),
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(1)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(light_info),
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(2)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(irr_info),
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .image_info(env_sampler_info),
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(4)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(pre_info),
+            *vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_sets[i])
+                .dst_binding(5)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .image_info(brdf_lut_info),
         ];
-        let irr_write = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_sets[i])
-            .dst_binding(2)
-            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .image_info(irr_info);
 
-        let env_sampler_info = &[*vk::DescriptorImageInfo::builder()
-            .sampler(sampler)
-        ];
-        let env_sampler_write = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_sets[i])
-            .dst_binding(3)
-            .descriptor_type(vk::DescriptorType::SAMPLER)
-            .image_info(env_sampler_info);
-
-        unsafe { device.update_descriptor_sets(&[ubo_write, light_write, irr_write, env_sampler_write], &[] as &[vk::CopyDescriptorSet]) };
+        unsafe { device.update_descriptor_sets(descriptor_writes, &[] as &[vk::CopyDescriptorSet]) };
     }
 
     Ok(descriptor_sets)

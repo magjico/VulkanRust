@@ -37,3 +37,4 @@ pub use ibl::Cubemap;
 pub use ibl::generate_lut;
 pub use ibl::generate_environment;
 pub use ibl::generate_irradiance;
+pub use ibl::generate_prefiltered;

@@ -28,6 +28,7 @@ impl Pipeline {
 		device: &Device,
 		compute_shader: &[u8],
 		set_layouts: &[vk::DescriptorSetLayout],
+		push_constant_ranges: &[vk::PushConstantRange],
 	) -> Result<Self> {
 		let shader_module = create_shader_module(device, compute_shader)?;
 
@@ -37,6 +38,7 @@ impl Pipeline {
             .name(b"main\0");
 
 		let layout_info = vk::PipelineLayoutCreateInfo::builder()
+			.push_constant_ranges(push_constant_ranges)
 			.set_layouts(set_layouts);
 		let vk_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
 

@@ -42,6 +42,7 @@ impl ColorAttachment {
 			vk_format,
 			vk::ImageAspectFlags::COLOR,
 			vk::ImageViewType::_2D,
+			0,
 			1,
 			1,
 		)?;
@@ -108,6 +109,7 @@ impl DepthAttachment {
 			vk_format,
 			vk::ImageAspectFlags::DEPTH,
 			vk::ImageViewType::_2D,
+			0,
 			1,
 			1,
 		)?;
